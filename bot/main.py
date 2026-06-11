@@ -20,7 +20,7 @@ from telegram.error import BadRequest, Forbidden, TelegramError
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8326367075:AAFjq1Wknv_lvhrinuNkDIaEwiTShJ3NEA8").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 PLATFORM_URL = os.getenv("PLATFORM_URL", "https://kentavr.world/?ref=kentavrmarket").strip()
 DB_PATH = "kentavr_stats.db"
 
@@ -345,30 +345,22 @@ async def render_screen(
 ):
     builder = SCREENS.get(screen_key, screen_main)
     text, markup = builder()
-
     if screen_key in STAT_MAP:
         await increment_stat(STAT_MAP[screen_key])
-
     if is_new:
         await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
         return
-
     query = update.callback_query
     try:
         await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
     except BadRequest as e:
-        if "Message is not modified" in str(e):
-            pass
-        else:
+        if "Message is not modified" not in str(e):
             raise
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await asyncio.gather(
-        increment_stat("starts"),
-        register_user(user_id),
-    )
+    await asyncio.gather(increment_stat("starts"), register_user(user_id))
     await render_screen("main", update, context, is_new=True)
     return ConversationHandler.END
 
@@ -397,11 +389,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_ids = await get_all_user_ids()
     await update.message.reply_text(
-        f"📣 <b>Рассылка</b>\n\n"
-        f"Аудитория: <b>{len(user_ids)}</b> пользователей.\n\n"
-        "Напиши текст сообщения — поддерживается HTML-разметка "
-        "(<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;a href=...&gt;</code>).\n\n"
-        "<i>Для отмены отправь /cancel</i>",
+        f"📣 <b>Рассылка</b>\n\nАудитория: <b>{len(user_ids)}</b> пользователей.\n\n"
+        "Напиши текст сообщения (поддерживается HTML).\n\n<i>Для отмены: /cancel</i>",
         parse_mode="HTML",
     )
     return BROADCAST_WAITING
@@ -410,11 +399,7 @@ async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_text = update.message.text
     user_ids = await get_all_user_ids()
-
-    status_msg = await update.message.reply_text(
-        f"⏳ Отправляю сообщение {len(user_ids)} пользователям..."
-    )
-
+    status_msg = await update.message.reply_text(f"⏳ Отправляю {len(user_ids)} пользователям...")
     sent, failed = 0, 0
     for uid in user_ids:
         try:
@@ -423,13 +408,10 @@ async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Forbidden:
             failed += 1
         except TelegramError as e:
-            logger.warning("Broadcast error for user %d: %s", uid, e)
+            logger.warning("Broadcast error for %d: %s", uid, e)
             failed += 1
-
     await status_msg.edit_text(
-        f"✅ <b>Рассылка завершена</b>\n\n"
-        f"📨 Доставлено: <b>{sent}</b>\n"
-        f"❌ Ошибок: <b>{failed}</b>",
+        f"✅ <b>Рассылка завершена</b>\n\n📨 Доставлено: <b>{sent}</b>\n❌ Ошибок: <b>{failed}</b>",
         parse_mode="HTML",
     )
     return ConversationHandler.END
@@ -446,31 +428,20 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set. Add it to environment secrets.")
-
+        raise RuntimeError("BOT_TOKEN is not set.")
     threading.Thread(target=_start_health_server, daemon=True).start()
-    logger.info("Health server started on port %s", os.getenv("PORT", "8080"))
-
     asyncio.get_event_loop().run_until_complete(init_db())
-
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_error_handler(error_handler)
-
     broadcast_handler = ConversationHandler(
         entry_points=[CommandHandler("broadcast", cmd_broadcast_start)],
-        states={
-            BROADCAST_WAITING: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)
-            ]
-        },
+        states={BROADCAST_WAITING: [MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)]},
         fallbacks=[CommandHandler("cancel", cmd_broadcast_cancel)],
     )
-
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(broadcast_handler)
     app.add_handler(CallbackQueryHandler(button_handler))
-
     logger.info("Bot started successfully. Polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
