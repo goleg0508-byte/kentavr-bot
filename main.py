@@ -20,7 +20,7 @@ from telegram.error import BadRequest, Forbidden, TelegramError
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8326367075:AAFjq1Wknv_lvhrinuNkDIaEwiTShJ3NEA8").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8857711392:AAFswpbKl3dBwA0LX5aBvvWZ0Q9WmtM3Bqo").strip()
 PLATFORM_URL = os.getenv("PLATFORM_URL", "https://kentavr.world/?ref=kentavrmarket").strip()
 DB_PATH = "kentavr_stats.db"
 
