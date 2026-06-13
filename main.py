@@ -3,6 +3,9 @@ import logging
 import asyncio
 import threading
 import aiosqlite
+import json
+import urllib.request
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
@@ -26,12 +29,117 @@ DB_PATH = "kentavr_stats.db"
 
 BROADCAST_WAITING = 1
 
+# Cache for Telegraph article URL (created once on first use)
+_telegraph_url: str | None = None
+
+
+def _create_telegraph_page() -> str:
+    """Create a Telegraph page with the commercial proposal and return its URL."""
+    content = [
+        {"tag": "p", "children": [
+            {"tag": "b", "children": ["KENTAVR — это альтернативный виртуальный рынок,"]},
+            " созданный на основе принципиально новой бизнес-модели и делового мышления."
+        ]},
+        {"tag": "p", "children": [
+            "KENTAVR — это StartUp, социальный экспериментальный проект, в котором могут принять участие "
+            "все желающие, независимо от юридического и социального статуса, профессии и гражданства."
+        ]},
+        {"tag": "p", "children": [
+            "Каждый зарегистрированный пользователь становится ",
+            {"tag": "b", "children": ["совладельцем платформы"]},
+            ", имеет личный кабинет, счета для внутренней виртуальной валюты и право на получение "
+            "своей доли дохода от капитализации маркетплейса."
+        ]},
+        {"tag": "p", "children": [
+            {"tag": "b", "children": ["ТТК (Торговый Токен KENTAVR)"]},
+            " — программно-цифровой продукт, созданный с использованием МАК "
+            "(Математический Алгоритм Капитализации) для контроля товарооборота и "
+            "автоматического распределения дохода между участниками."
+        ]},
+        {"tag": "h3", "children": ["📋 Условия для продавцов"]},
+        {"tag": "p", "children": [
+            {"tag": "b", "children": ["1. Бесплатная регистрация"]},
+            " — оформление карточек товаров, продуктов, услуг или интеллектуальной собственности без каких-либо взносов."
+        ]},
+        {"tag": "p", "children": [
+            {"tag": "b", "children": ["2. Единый административный сбор — 10%"]},
+            " от суммы продаж."
+        ]},
+        {"tag": "blockquote", "children": [
+            "Пример: продано товаров на 100 000 ₽ → сбор составит 10 000 ₽."
+        ]},
+        {"tag": "p", "children": [
+            {"tag": "b", "children": ["3. Кэшбэк для покупателей — от 10% до 50%"]},
+            " от стоимости товара в виде ТТК."
+        ]},
+        {"tag": "blockquote", "children": [
+            "Пример: товар стоит 1 000 ₽, кэшбэк 20% → покупатель получает ТТК на сумму 200 ₽ "
+            "по актуальному курсу. Если цена ТТК = 100 ₽, покупатель получит 2 ТТК на свой счёт."
+        ]},
+        {"tag": "p", "children": [
+            {"tag": "b", "children": ["4. Право продавца на покупку ТТК"]},
+            " — в размере установленного кэшбэка."
+        ]},
+        {"tag": "blockquote", "children": [
+            "Пример: если кэшбэк для покупателя составляет 200 ₽, продавец может приобрести "
+            "ТТК на эту же сумму по актуальной цене на дату покупки."
+        ]},
+        {"tag": "h3", "children": ["🚚 Доставка"]},
+        {"tag": "p", "children": [
+            "На первом этапе за доставку товаров отвечает продавец. "
+            "По мере роста платформы администрация будет привлекать логистических партнёров, "
+            "оптимизировать цены на доставку и организовывать пункты выдачи заказов (ПВЗ)."
+        ]},
+        {"tag": "h3", "children": ["🚀 Присоединяйтесь к KENTAVR MARKET"]},
+        {"tag": "p", "children": [
+            "Станьте частью социального маркетплейса нового поколения — "
+            "регистрация бесплатна, участие открыто для всех."
+        ]},
+        {"tag": "p", "children": [
+            {"tag": "a", "attrs": {"href": PLATFORM_URL}, "children": ["👉 Перейти на платформу KENTAVR MARKET"]}
+        ]},
+    ]
+
+    payload = json.dumps({
+        "access_token": "b968da509bb76866c35425099bc0989a5ec3b32997d55286c657e6a1e3b",
+        "title": "Коммерческое предложение — KENTAVR MARKET",
+        "author_name": "KENTAVR MARKET",
+        "author_url": PLATFORM_URL,
+        "content": json.dumps(content),
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        "https://api.telegra.ph/createPage",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        data = json.loads(resp.read())
+
+    if data.get("ok"):
+        return data["result"]["url"]
+    raise RuntimeError(f"Telegraph API error: {data}")
+
+
+async def get_telegraph_url() -> str:
+    """Return cached Telegraph URL, creating the page if needed."""
+    global _telegraph_url
+    if _telegraph_url is None:
+        loop = asyncio.get_event_loop()
+        _telegraph_url = await loop.run_in_executor(None, _create_telegraph_page)
+        logger.info("Telegraph page created: %s", _telegraph_url)
+    return _telegraph_url
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
+
+# ─────────────────────────────────────────────
+# HEALTH SERVER (required for Replit VM deployment)
+# ─────────────────────────────────────────────
 
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -50,6 +158,10 @@ def _start_health_server():
     except OSError as e:
         logger.warning("Health server could not start on port %s: %s", port, e)
 
+
+# ─────────────────────────────────────────────
+# DATABASE
+# ─────────────────────────────────────────────
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -111,6 +223,10 @@ async def get_all_user_ids() -> list[int]:
     return [row[0] for row in rows]
 
 
+# ─────────────────────────────────────────────
+# SCREEN DEFINITIONS
+# ─────────────────────────────────────────────
+
 def screen_main():
     text = (
         "<b>Привет!</b>\n\n"
@@ -128,6 +244,7 @@ def screen_main():
         [InlineKeyboardButton("🛒 Я покупатель", callback_data="buyer")],
         [InlineKeyboardButton("🏪 Я продавец", callback_data="seller")],
         [InlineKeyboardButton("💎 Хочу узнать про ТТК", callback_data="ttk")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", callback_data="commercial")],
         [InlineKeyboardButton("🚀 Перейти на платформу", callback_data="goto_platform")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -337,6 +454,10 @@ STAT_MAP = {
 }
 
 
+# ─────────────────────────────────────────────
+# RENDER ENGINE
+# ─────────────────────────────────────────────
+
 async def render_screen(
     screen_key: str,
     update: Update,
@@ -345,22 +466,34 @@ async def render_screen(
 ):
     builder = SCREENS.get(screen_key, screen_main)
     text, markup = builder()
+
     if screen_key in STAT_MAP:
         await increment_stat(STAT_MAP[screen_key])
+
     if is_new:
         await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
         return
+
     query = update.callback_query
     try:
         await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
     except BadRequest as e:
-        if "Message is not modified" not in str(e):
+        if "Message is not modified" in str(e):
+            pass
+        else:
             raise
 
 
+# ─────────────────────────────────────────────
+# HANDLERS — MAIN BOT
+# ─────────────────────────────────────────────
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    await asyncio.gather(increment_stat("starts"), register_user(user_id))
+    await asyncio.gather(
+        increment_stat("starts"),
+        register_user(user_id),
+    )
     await render_screen("main", update, context, is_new=True)
     return ConversationHandler.END
 
@@ -380,17 +513,60 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode="HTML")
 
 
+async def handle_commercial(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send commercial proposal as a Telegraph link."""
+    query = update.callback_query
+    await query.answer()
+    try:
+        url = await get_telegraph_url()
+    except Exception as e:
+        logger.error("Failed to get Telegraph URL: %s", e)
+        await query.edit_message_text(
+            "⚠️ Не удалось загрузить коммерческое предложение. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🏠 Главное меню", callback_data="main")]
+            ]),
+        )
+        return
+
+    text = (
+        "<b>📄 Коммерческое предложение</b>\n\n"
+        "Нажми кнопку ниже, чтобы открыть полное КП для продавцов — "
+        "прямо в Telegram через Telegraph.\n\n"
+        "<i>Условия участия, кэшбэк, ТТК и всё, что нужно знать продавцу.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("📖 Открыть КП в Telegraph", url=url)],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    try:
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if query.data == "commercial":
+        await handle_commercial(update, context)
+        return
     await query.answer()
     await render_screen(query.data, update, context)
 
 
+# ─────────────────────────────────────────────
+# HANDLERS — BROADCAST CONVERSATION
+# ─────────────────────────────────────────────
+
 async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_ids = await get_all_user_ids()
     await update.message.reply_text(
-        f"📣 <b>Рассылка</b>\n\nАудитория: <b>{len(user_ids)}</b> пользователей.\n\n"
-        "Напиши текст сообщения (поддерживается HTML).\n\n<i>Для отмены: /cancel</i>",
+        f"📣 <b>Рассылка</b>\n\n"
+        f"Аудитория: <b>{len(user_ids)}</b> пользователей.\n\n"
+        "Напиши текст сообщения — поддерживается HTML-разметка "
+        "(<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;a href=...&gt;</code>).\n\n"
+        "<i>Для отмены отправь /cancel</i>",
         parse_mode="HTML",
     )
     return BROADCAST_WAITING
@@ -399,7 +575,11 @@ async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     message_text = update.message.text
     user_ids = await get_all_user_ids()
-    status_msg = await update.message.reply_text(f"⏳ Отправляю {len(user_ids)} пользователям...")
+
+    status_msg = await update.message.reply_text(
+        f"⏳ Отправляю сообщение {len(user_ids)} пользователям..."
+    )
+
     sent, failed = 0, 0
     for uid in user_ids:
         try:
@@ -408,10 +588,13 @@ async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE)
         except Forbidden:
             failed += 1
         except TelegramError as e:
-            logger.warning("Broadcast error for %d: %s", uid, e)
+            logger.warning("Broadcast error for user %d: %s", uid, e)
             failed += 1
+
     await status_msg.edit_text(
-        f"✅ <b>Рассылка завершена</b>\n\n📨 Доставлено: <b>{sent}</b>\n❌ Ошибок: <b>{failed}</b>",
+        f"✅ <b>Рассылка завершена</b>\n\n"
+        f"📨 Доставлено: <b>{sent}</b>\n"
+        f"❌ Ошибок: <b>{failed}</b>",
         parse_mode="HTML",
     )
     return ConversationHandler.END
@@ -422,26 +605,45 @@ async def cmd_broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYP
     return ConversationHandler.END
 
 
+# ─────────────────────────────────────────────
+# ERROR HANDLER
+# ─────────────────────────────────────────────
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error("Unhandled exception: %s", context.error, exc_info=context.error)
 
 
+# ─────────────────────────────────────────────
+# ENTRY POINT
+# ─────────────────────────────────────────────
+
 def main():
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set.")
+        raise RuntimeError("BOT_TOKEN is not set. Add it to environment secrets.")
+
     threading.Thread(target=_start_health_server, daemon=True).start()
+    logger.info("Health server started on port %s", os.getenv("PORT", "8080"))
+
     asyncio.get_event_loop().run_until_complete(init_db())
+
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_error_handler(error_handler)
+
     broadcast_handler = ConversationHandler(
         entry_points=[CommandHandler("broadcast", cmd_broadcast_start)],
-        states={BROADCAST_WAITING: [MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)]},
+        states={
+            BROADCAST_WAITING: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)
+            ]
+        },
         fallbacks=[CommandHandler("cancel", cmd_broadcast_cancel)],
     )
+
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(broadcast_handler)
     app.add_handler(CallbackQueryHandler(button_handler))
+
     logger.info("Bot started successfully. Polling...")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
