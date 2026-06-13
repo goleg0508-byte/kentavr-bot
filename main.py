@@ -33,6 +33,25 @@ BROADCAST_WAITING = 1
 _telegraph_url: str | None = None
 
 
+def _get_telegraph_token() -> str:
+    """Create a new Telegraph account and return its access token."""
+    payload = json.dumps({
+        "short_name": "KentavrMarket",
+        "author_name": "KENTAVR MARKET",
+        "author_url": PLATFORM_URL,
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.telegra.ph/createAccount",
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        result = json.loads(resp.read())
+    if result.get("ok"):
+        return result["result"]["access_token"]
+    raise RuntimeError(f"Telegraph createAccount error: {result}")
+
+
 def _create_telegraph_page() -> str:
     """Create a Telegraph page with the commercial proposal and return its URL."""
     content = [
@@ -100,8 +119,10 @@ def _create_telegraph_page() -> str:
         ]},
     ]
 
+    token = _get_telegraph_token()
+
     payload = json.dumps({
-        "access_token": "b968da509bb76866c35425099bc0989a5ec3b32997d55286c657e6a1e3b",
+        "access_token": token,
         "title": "Коммерческое предложение — KENTAVR MARKET",
         "author_name": "KENTAVR MARKET",
         "author_url": PLATFORM_URL,
@@ -332,19 +353,18 @@ def screen_seller_detail():
 def screen_ttk():
     text = (
         "<b>💎 Торговый Токен KENTAVR (ТТК)</b>\n\n"
-        "<b>ТТК</b> — это внутренний цифровой инструмент, действующий в рамках экосистемы "
-        "<b>KENTAVR MARKET</b>.\n\n"
-        "<blockquote>Применяется для начисления бонусов, cashback, частичной оплаты товаров "
-        "и услуг, а также как элемент участия в развитии сообщества.</blockquote>\n\n"
-        "<b>ТТК</b> — важная часть бизнес-модели платформы, связанная с внутренними "
-        "процессами торговой среды.\n\n"
-        "<i>Что тебя интересует?</i>"
+        "ТТК — это не криптовалюта и не инвестиционный инструмент.\n\n"
+        "<blockquote>Это внутренний цифровой инструмент платформы, созданный для учёта "
+        "активности участников и распределения части дохода от товарооборота.</blockquote>\n\n"
+        "Он применяется внутри системы как мера участия: чем активнее ты вовлечён "
+        "в деловую среду сообщества, тем больше ТТК накапливается на твоём счёте.\n\n"
+        "<i>Что тебя интересует больше?</i>"
     )
     keyboard = [
-        [InlineKeyboardButton("❓ Это криптовалюта?", callback_data="ttk_crypto")],
-        [InlineKeyboardButton("💰 В чём выгода?", callback_data="ttk_benefit")],
-        [InlineKeyboardButton("⭐ Почему это уникально?", callback_data="ttk_unique")],
-        [InlineKeyboardButton("🚀 Как начать?", callback_data="ttk_start")],
+        [InlineKeyboardButton("🔍 Как устроен ТТК", callback_data="ttk_crypto")],
+        [InlineKeyboardButton("💡 Зачем он нужен", callback_data="ttk_benefit")],
+        [InlineKeyboardButton("⭐ Чем отличается", callback_data="ttk_unique")],
+        [InlineKeyboardButton("🚀 Как начать", callback_data="ttk_start")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -352,12 +372,14 @@ def screen_ttk():
 
 def screen_ttk_crypto():
     text = (
-        "<b>❓ Это криптовалюта?</b>\n\n"
-        "<b>ТТК</b> не является классической биржевой криптовалютой.\n\n"
-        "<blockquote>Это внутренний торговый токен, применяемый в системе <b>KENTAVR MARKET</b> "
-        "для бонусов, cashback и операций между участниками сообщества.</blockquote>\n\n"
-        "<i>Его ценность определяется активностью и товарооборотом внутри экосистемы, "
-        "а не биржевыми котировками.</i>"
+        "<b>🔍 Как устроен ТТК</b>\n\n"
+        "ТТК создан на основе <b>МАК — Математического Алгоритма Капитализации</b>.\n\n"
+        "<blockquote>Это программный механизм, который автоматически фиксирует каждую сделку "
+        "на платформе и начисляет ТТК участникам пропорционально их вкладу в общий "
+        "товарооборот.</blockquote>\n\n"
+        "Никакого ручного управления распределением дохода — всё работает по заданным "
+        "правилам алгоритма.\n\n"
+        "<i>Это делает систему прозрачной и предсказуемой для всех участников.</i>"
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
@@ -369,14 +391,14 @@ def screen_ttk_crypto():
 
 def screen_ttk_benefit():
     text = (
-        "<b>💰 В чём выгода?</b>\n\n"
-        "Главная идея — объединение покупательской и предпринимательской активности "
-        "в единой среде.\n\n"
-        "<blockquote>Чем больше взаимодействий происходит внутри сообщества, тем активнее "
-        "развивается общий товарооборот и расширяются возможности для каждого "
-        "участника.</blockquote>\n\n"
-        "<i>ТТК служит связующим инструментом, который делает участие в системе "
-        "более предметным.</i>"
+        "<b>💡 Зачем нужен ТТК</b>\n\n"
+        "ТТК выполняет несколько функций внутри платформы.\n\n"
+        "<blockquote>Во-первых, он фиксирует участие в товарообороте — как покупателя, "
+        "так и продавца. Во-вторых, он используется как инструмент cashback: "
+        "покупатель получает ТТК с каждой покупки.</blockquote>\n\n"
+        "Накопленные ТТК отражают твой вклад в развитие сообщества и могут применяться "
+        "в рамках внутренней экономики платформы.\n\n"
+        "<i>Чем активнее участие — тем больше возможностей открывается.</i>"
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
@@ -388,11 +410,14 @@ def screen_ttk_benefit():
 
 def screen_ttk_unique():
     text = (
-        "<b>⭐ Почему это уникально?</b>\n\n"
-        "<b>KENTAVR MARKET</b> сочетает возможности маркетплейса, делового сообщества "
-        "и токенизированной модели взаимодействия.\n\n"
-        "<blockquote>Такой подход формирует среду, где покупатели, продавцы и партнёры объединены "
-        "общей системой сотрудничества и внутреннего обмена ценностью.</blockquote>\n\n"
+        "<b>⭐ Чем отличается ТТК</b>\n\n"
+        "Большинство бонусных программ работают в одностороннем порядке: "
+        "компания начисляет баллы, пользователь их тратит.\n\n"
+        "<blockquote>В KENTAVR MARKET ТТК отражает участие в общей системе товарооборота. "
+        "Это не просто скидочный инструмент, а элемент модели, где активность каждого "
+        "участника влияет на развитие платформы в целом.</blockquote>\n\n"
+        "Покупатели, продавцы и партнёры объединены одной системой сотрудничества и "
+        "внутреннего обмена ценностью.\n\n"
         "<i>Это выходит за рамки привычного формата торговой площадки.</i>"
     )
     keyboard = [
@@ -472,181 +497,4 @@ async def render_screen(
 
     if is_new:
         await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
-        return
-
-    query = update.callback_query
-    try:
-        await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
-    except BadRequest as e:
-        if "Message is not modified" in str(e):
-            pass
-        else:
-            raise
-
-
-# ─────────────────────────────────────────────
-# HANDLERS — MAIN BOT
-# ─────────────────────────────────────────────
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await asyncio.gather(
-        increment_stat("starts"),
-        register_user(user_id),
-    )
-    await render_screen("main", update, context, is_new=True)
-    return ConversationHandler.END
-
-
-async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    stats = await get_stats()
-    text = (
-        "📊 <b>Статистика KENTAVR MARKET Bot</b>\n\n"
-        f"👥 Уникальных пользователей: <b>{stats.get('unique_users', 0)}</b>\n"
-        f"▶️ Запусков /start: <b>{stats.get('starts', 0)}</b>\n\n"
-        f"🛒 Открытий раздела покупателя: <b>{stats.get('buyer_opens', 0)}</b>\n"
-        f"🏪 Открытий раздела продавца: <b>{stats.get('seller_opens', 0)}</b>\n"
-        f"💎 Открытий раздела ТТК: <b>{stats.get('ttk_opens', 0)}</b>\n\n"
-        f"🚀 Переходов на платформу: <b>{stats.get('platform_clicks', 0)}</b>\n\n"
-        "📣 Для рассылки используй /broadcast"
-    )
-    await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def handle_commercial(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send commercial proposal as a Telegraph link."""
-    query = update.callback_query
-    await query.answer()
-    try:
-        url = await get_telegraph_url()
-    except Exception as e:
-        logger.error("Failed to get Telegraph URL: %s", e)
-        await query.edit_message_text(
-            "⚠️ Не удалось загрузить коммерческое предложение. Попробуйте позже.",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🏠 Главное меню", callback_data="main")]
-            ]),
-        )
-        return
-
-    text = (
-        "<b>📄 Коммерческое предложение</b>\n\n"
-        "Нажми кнопку ниже, чтобы открыть полное КП для продавцов — "
-        "прямо в Telegram через Telegraph.\n\n"
-        "<i>Условия участия, кэшбэк, ТТК и всё, что нужно знать продавцу.</i>"
-    )
-    keyboard = [
-        [InlineKeyboardButton("📖 Открыть КП в Telegraph", url=url)],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
-    ]
-    try:
-        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
-    except BadRequest as e:
-        if "Message is not modified" not in str(e):
-            raise
-
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    if query.data == "commercial":
-        await handle_commercial(update, context)
-        return
-    await query.answer()
-    await render_screen(query.data, update, context)
-
-
-# ─────────────────────────────────────────────
-# HANDLERS — BROADCAST CONVERSATION
-# ─────────────────────────────────────────────
-
-async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_ids = await get_all_user_ids()
-    await update.message.reply_text(
-        f"📣 <b>Рассылка</b>\n\n"
-        f"Аудитория: <b>{len(user_ids)}</b> пользователей.\n\n"
-        "Напиши текст сообщения — поддерживается HTML-разметка "
-        "(<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;a href=...&gt;</code>).\n\n"
-        "<i>Для отмены отправь /cancel</i>",
-        parse_mode="HTML",
-    )
-    return BROADCAST_WAITING
-
-
-async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message_text = update.message.text
-    user_ids = await get_all_user_ids()
-
-    status_msg = await update.message.reply_text(
-        f"⏳ Отправляю сообщение {len(user_ids)} пользователям..."
-    )
-
-    sent, failed = 0, 0
-    for uid in user_ids:
-        try:
-            await context.bot.send_message(chat_id=uid, text=message_text, parse_mode="HTML")
-            sent += 1
-        except Forbidden:
-            failed += 1
-        except TelegramError as e:
-            logger.warning("Broadcast error for user %d: %s", uid, e)
-            failed += 1
-
-    await status_msg.edit_text(
-        f"✅ <b>Рассылка завершена</b>\n\n"
-        f"📨 Доставлено: <b>{sent}</b>\n"
-        f"❌ Ошибок: <b>{failed}</b>",
-        parse_mode="HTML",
-    )
-    return ConversationHandler.END
-
-
-async def cmd_broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Отменено.")
-    return ConversationHandler.END
-
-
-# ─────────────────────────────────────────────
-# ERROR HANDLER
-# ─────────────────────────────────────────────
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error("Unhandled exception: %s", context.error, exc_info=context.error)
-
-
-# ─────────────────────────────────────────────
-# ENTRY POINT
-# ─────────────────────────────────────────────
-
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set. Add it to environment secrets.")
-
-    threading.Thread(target=_start_health_server, daemon=True).start()
-    logger.info("Health server started on port %s", os.getenv("PORT", "8080"))
-
-    asyncio.get_event_loop().run_until_complete(init_db())
-
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_error_handler(error_handler)
-
-    broadcast_handler = ConversationHandler(
-        entry_points=[CommandHandler("broadcast", cmd_broadcast_start)],
-        states={
-            BROADCAST_WAITING: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", cmd_broadcast_cancel)],
-    )
-
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("admin", cmd_admin))
-    app.add_handler(broadcast_handler)
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    logger.info("Bot started successfully. Polling...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    main()
+       
