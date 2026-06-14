@@ -74,7 +74,6 @@ def _start_health_server():
 async def init_db():
     global db_pool, USE_POSTGRES
     
-    # Пробуем подключиться к PostgreSQL
     if DATABASE_URL:
         try:
             import asyncpg
@@ -91,9 +90,7 @@ async def init_db():
                         user_id BIGINT PRIMARY KEY,
                         first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                         last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        actions_count INTEGER DEFAULT 0,
-                        referral_code TEXT,
-                        referred_by BIGINT
+                        actions_count INTEGER DEFAULT 0
                     )
                 """)
                 await conn.execute("""
@@ -103,16 +100,9 @@ async def init_db():
                         last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
-                await conn.execute("""
-                    CREATE TABLE IF NOT EXISTS referrals (
-                        code TEXT PRIMARY KEY,
-                        owner_id BIGINT UNIQUE,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
                 
                 keys = ("starts", "buyer_opens", "seller_opens", "ttk_opens", 
-                        "platform_clicks", "commercial_opens", "webapp_opens")
+                        "platform_clicks", "commercial_opens")
                 for key in keys:
                     await conn.execute(
                         "INSERT INTO stats (key, value) VALUES ($1, 0) ON CONFLICT (key) DO NOTHING",
@@ -124,7 +114,6 @@ async def init_db():
         except Exception as e:
             logger.warning(f"PostgreSQL connection failed: {e}, falling back to SQLite")
     
-    # Fallback to SQLite
     import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
@@ -138,9 +127,7 @@ async def init_db():
                 user_id INTEGER PRIMARY KEY,
                 first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                actions_count INTEGER DEFAULT 0,
-                referral_code TEXT,
-                referred_by INTEGER
+                actions_count INTEGER DEFAULT 0
             )
         """)
         await db.execute("""
@@ -150,16 +137,9 @@ async def init_db():
                 last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS referrals (
-                code TEXT PRIMARY KEY,
-                owner_id INTEGER UNIQUE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
         
         keys = ("starts", "buyer_opens", "seller_opens", "ttk_opens", 
-                "platform_clicks", "commercial_opens", "webapp_opens")
+                "platform_clicks", "commercial_opens")
         for key in keys:
             await db.execute(
                 "INSERT OR IGNORE INTO stats (key, value) VALUES (?, 0)", (key,)
@@ -188,7 +168,7 @@ async def increment_stat(key: str):
             await db.commit()
 
 
-async def register_user(user_id: int, referral_code: str = None):
+async def register_user(user_id: int):
     if USE_POSTGRES and db_pool:
         async with db_pool.acquire() as conn:
             existing = await conn.fetchval("SELECT user_id FROM unique_users WHERE user_id = $1", user_id)
@@ -198,25 +178,10 @@ async def register_user(user_id: int, referral_code: str = None):
                     user_id
                 )
             else:
-                import random
-                import string
-                ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
                 await conn.execute("""
-                    INSERT INTO unique_users (user_id, first_seen, last_seen, actions_count, referral_code)
-                    VALUES ($1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, $2)
-                """, user_id, ref_code)
-                await conn.execute(
-                    "INSERT INTO referrals (code, owner_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                    ref_code, user_id
-                )
-                
-                if referral_code:
-                    referrer = await conn.fetchval("SELECT owner_id FROM referrals WHERE code = $1", referral_code)
-                    if referrer:
-                        await conn.execute(
-                            "UPDATE unique_users SET referred_by = $1 WHERE user_id = $2",
-                            referrer, user_id
-                        )
+                    INSERT INTO unique_users (user_id, first_seen, last_seen, actions_count)
+                    VALUES ($1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
+                """, user_id)
     else:
         import aiosqlite
         async with aiosqlite.connect(DB_PATH) as db:
@@ -228,26 +193,10 @@ async def register_user(user_id: int, referral_code: str = None):
                     (user_id,)
                 )
             else:
-                import random
-                import string
-                ref_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
                 await db.execute("""
-                    INSERT INTO unique_users (user_id, first_seen, last_seen, actions_count, referral_code)
-                    VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1, ?)
-                """, (user_id, ref_code))
-                await db.execute(
-                    "INSERT INTO referrals (code, owner_id) VALUES (?, ?)",
-                    (ref_code, user_id)
-                )
-                
-                if referral_code:
-                    cursor = await db.execute("SELECT owner_id FROM referrals WHERE code = ?", (referral_code,))
-                    row = await cursor.fetchone()
-                    if row:
-                        await db.execute(
-                            "UPDATE unique_users SET referred_by = ? WHERE user_id = ?",
-                            (row[0], user_id)
-                        )
+                    INSERT INTO unique_users (user_id, first_seen, last_seen, actions_count)
+                    VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)
+                """, (user_id,))
             await db.commit()
 
 
@@ -288,9 +237,6 @@ async def get_stats() -> dict:
             
             total_actions = await conn.fetchval("SELECT SUM(actions_count) FROM unique_users")
             stats["total_actions"] = total_actions if total_actions else 0
-            
-            referrals = await conn.fetchval("SELECT COUNT(*) FROM unique_users WHERE referred_by IS NOT NULL")
-            stats["referrals"] = referrals if referrals else 0
     else:
         import aiosqlite
         async with aiosqlite.connect(DB_PATH) as db:
@@ -308,10 +254,6 @@ async def get_stats() -> dict:
             cursor4 = await db.execute("SELECT SUM(actions_count) FROM unique_users")
             row4 = await cursor4.fetchone()
             stats["total_actions"] = row4[0] if row4 else 0
-            
-            cursor5 = await db.execute("SELECT COUNT(*) FROM unique_users WHERE referred_by IS NOT NULL")
-            row5 = await cursor5.fetchone()
-            stats["referrals"] = row5[0] if row5 else 0
     return stats
 
 
@@ -355,7 +297,6 @@ def screen_main():
         [InlineKeyboardButton("💎 Хочу узнать про ТТК", callback_data="ttk")],
         [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("🚀 Перейти на платформу", callback_data="goto_platform")],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
 
@@ -375,8 +316,6 @@ def screen_buyer():
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
         [InlineKeyboardButton("📖 Узнать подробнее", callback_data="buyer_detail")],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -396,8 +335,6 @@ def screen_buyer_detail():
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="buyer")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
@@ -418,8 +355,6 @@ def screen_seller():
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
         [InlineKeyboardButton("📖 Узнать подробнее", callback_data="seller_detail")],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -439,8 +374,6 @@ def screen_seller_detail():
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="seller")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
@@ -463,8 +396,6 @@ def screen_ttk():
         [InlineKeyboardButton("💰 В чём выгода?", callback_data="ttk_benefit")],
         [InlineKeyboardButton("⭐ Почему это уникально?", callback_data="ttk_unique")],
         [InlineKeyboardButton("🚀 Как начать?", callback_data="ttk_start")],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -480,9 +411,6 @@ def screen_ttk_crypto():
         "а не биржевыми котировками.</i>"
     )
     keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
@@ -501,9 +429,6 @@ def screen_ttk_benefit():
         "более предметным.</i>"
     )
     keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
@@ -520,9 +445,6 @@ def screen_ttk_unique():
         "<i>Это выходит за рамки привычного формата торговой площадки.</i>"
     )
     keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
         [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
@@ -538,9 +460,7 @@ def screen_ttk_start():
         "покупки, продажи или партнёрство через ТТК.</i>"
     )
     keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
+        [InlineKeyboardButton("🚀 Перейти на платформу", callback_data="goto_platform")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -555,23 +475,6 @@ def screen_platform():
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Открыть KENTAVR MARKET", url=PLATFORM_URL)],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
-
-
-def screen_referral(user_id: int):
-    bot_username = os.getenv("BOT_USERNAME", "kentavr_bot")
-    text = (
-        "<b>👥 Пригласи друга в KENTAVR MARKET!</b>\n\n"
-        "Поделись ссылкой с друзьями и получай бонусы за каждого приглашённого!\n\n"
-        f"<blockquote>Твоя реферальная ссылка:\n"
-        f"<code>https://t.me/{bot_username}?start=ref_{user_id}</code></blockquote>\n\n"
-        "<i>Скопируй ссылку и отправь другу. Когда он зарегистрируется, вы оба получите бонусы!</i>"
-    )
-    keyboard = [
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -585,347 +488,3 @@ SCREENS = {
     "seller_detail": screen_seller_detail,
     "ttk": screen_ttk,
     "ttk_crypto": screen_ttk_crypto,
-    "ttk_benefit": screen_ttk_benefit,
-    "ttk_unique": screen_ttk_unique,
-    "ttk_start": screen_ttk_start,
-    "goto_platform": screen_platform,
-    "referral": screen_referral,
-}
-
-STAT_MAP = {
-    "buyer": "buyer_opens",
-    "seller": "seller_opens",
-    "ttk": "ttk_opens",
-    "goto_platform": "platform_clicks",
-}
-
-
-# ─────────────────────────────────────────────
-# RENDER ENGINE
-# ─────────────────────────────────────────────
-
-async def render_screen(
-    screen_key: str,
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    is_new: bool = False,
-):
-    user_id = update.effective_user.id
-    await save_user_session(user_id, screen_key)
-    
-    builder = SCREENS.get(screen_key, screen_main)
-    
-    if screen_key == "referral":
-        text, markup = builder(user_id)
-    else:
-        text, markup = builder()
-
-    if screen_key in STAT_MAP:
-        await increment_stat(STAT_MAP[screen_key])
-    
-    if screen_key == "commercial" or "web_app" in str(screen_key):
-        await increment_stat("commercial_opens")
-
-    if is_new:
-        await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
-        return
-
-    query = update.callback_query
-    try:
-        await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
-    except BadRequest as e:
-        if "Message is not modified" not in str(e):
-            raise
-
-
-# ─────────────────────────────────────────────
-# HANDLERS — MAIN BOT
-# ─────────────────────────────────────────────
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    referral_code = None
-    if context.args and context.args[0].startswith("ref_"):
-        referral_code = context.args[0][4:]
-    
-    await asyncio.gather(
-        increment_stat("starts"),
-        register_user(user_id, referral_code),
-    )
-    await render_screen("main", update, context, is_new=True)
-    return ConversationHandler.END
-
-
-async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔ Доступ запрещён. Эта команда только для администраторов.")
-        return
-    
-    stats = await get_stats()
-    text = (
-        "📊 <b>Статистика KENTAVR MARKET Bot</b>\n\n"
-        f"👥 Уникальных пользователей: <b>{stats.get('unique_users', 0)}</b>\n"
-        f"📅 Активных сегодня: <b>{stats.get('active_today', 0)}</b>\n"
-        f"🎯 Всего действий: <b>{stats.get('total_actions', 0)}</b>\n"
-        f"👥 Пришло по рефералке: <b>{stats.get('referrals', 0)}</b>\n\n"
-        f"▶️ Запусков /start: <b>{stats.get('starts', 0)}</b>\n\n"
-        f"🛒 Открытий раздела покупателя: <b>{stats.get('buyer_opens', 0)}</b>\n"
-        f"🏪 Открытий раздела продавца: <b>{stats.get('seller_opens', 0)}</b>\n"
-        f"💎 Открытий раздела ТТК: <b>{stats.get('ttk_opens', 0)}</b>\n"
-        f"📄 Открытий коммерческого предложения: <b>{stats.get('commercial_opens', 0)}</b>\n\n"
-        f"🚀 Переходов на платформу: <b>{stats.get('platform_clicks', 0)}</b>\n\n"
-        "📣 Для рассылки используй /broadcast\n"
-        "📊 Статистика обновляется в реальном времени"
-    )
-    await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await render_screen(query.data, update, context)
-
-
-# ─────────────────────────────────────────────
-# HANDLERS — BROADCAST CONVERSATION
-# ─────────────────────────────────────────────
-
-async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return
-    
-    user_ids = await get_all_user_ids()
-    await update.message.reply_text(
-        f"📣 <b>Рассылка</b>\n\n"
-        f"Аудитория: <b>{len(user_ids)}</b> пользователей.\n\n"
-        "Напиши текст сообщения — поддерживается HTML-разметка "
-        "(<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;a href=...&gt;</code>).\n\n"
-        "<i>Для отмены отправь /cancel</i>",
-        parse_mode="HTML",
-    )
-    return BROADCAST_WAITING
-
-
-async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return ConversationHandler.END
-    
-    user_ids = await get_all_user_ids()
-    message_text = update.message.text
-    
-    status_msg = await update.message.reply_text(
-        f"⏳ Отправляю сообщение {len(user_ids)} пользователям..."
-    )
-    
-    sent, failed = 0, 0
-    for i, uid in enumerate(user_ids):
-        try:
-            await context.bot.send_message(chat_id=uid, text=message_text, parse_mode="HTML")
-            sent += 1
-        except Forbidden:
-            failed += 1
-        except TelegramError as e:
-            logger.warning("Broadcast error for user %d: %s", uid, e)
-            failed += 1
-        
-        if (i + 1) % 30 == 0:
-            await asyncio.sleep(1)
-        
-        if (i + 1) % 100 == 0:
-            await status_msg.edit_text(
-                f"⏳ Отправка...\n"
-                f"📨 Отправлено: {sent}\n"
-                f"❌ Ошибок: {failed}\n"
-                f"📊 Прогресс: {i+1}/{len(user_ids)}"
-            )
-    
-    await status_msg.edit_text(
-        f"✅ <b>Рассылка завершена</b>\n\n"
-        f"📨 Доставлено: <b>{sent}</b>\n"
-        f"❌ Ошибок: <b>{failed}</b>\n"
-        f"📊 Всего: <b>{len(user_ids)}</b> пользователей",
-        parse_mode="HTML",
-    )
-    return ConversationHandler.END
-async def cmd_broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return ConversationHandler.END
-    
-    await update.message.reply_text("❌ Рассылка отменена.")
-    return ConversationHandler.END
-
-
-# ─────────────────────────────────────────────
-# INLINE MODE HANDLER
-# ─────────────────────────────────────────────
-
-async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from telegram import InlineQueryResultArticle, InputTextMessageContent
-    
-    results = [
-        InlineQueryResultArticle(
-            id="1",
-            title="KENTAVR MARKET - Социальный маркетплейс",
-            description="Узнай больше о платформе и торговом токене",
-            input_message_content=InputTextMessageContent(
-                f"🚀 <b>KENTAVR MARKET</b>\n\n"
-                f"Социальный маркетплейс нового поколения с торговым токеном ТТК.\n\n"
-                f"Перейти: {PLATFORM_URL}",
-                parse_mode="HTML"
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🚀 Открыть KENTAVR MARKET", url=PLATFORM_URL)],
-                [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
-            ])
-        ),
-        InlineQueryResultArticle(
-            id="2",
-            title="Коммерческое предложение KENTAVR",
-            description="Подробная информация для партнёров",
-            input_message_content=InputTextMessageContent(
-                f"📄 <b>Коммерческое предложение KENTAVR MARKET</b>\n\n"
-                f"Откройте полную презентацию проекта в мини-приложении.",
-                parse_mode="HTML"
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("📄 Открыть КП", web_app=WebAppInfo(url=LANDING_URL))],
-            ])
-        ),
-        InlineQueryResultArticle(
-            id="3",
-            title="Что такое ТТК?",
-            description="Торговый токен KENTAVR - объяснение",
-            input_message_content=InputTextMessageContent(
-                f"💎 <b>Торговый Токен KENTAVR (ТТК)</b>\n\n"
-                f"Внутренний цифровой инструмент экосистемы для бонусов и cashback.",
-                parse_mode="HTML"
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("💎 Узнать про ТТК", callback_data="ttk")],
-            ])
-        )
-    ]
-    
-    await update.inline_query.answer(results, cache_time=300)
-
-
-# ─────────────────────────────────────────────
-# WEB APP HANDLER
-# ─────────────────────────────────────────────
-
-async def web_app_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    await increment_stat("webapp_opens")
-    await increment_stat("commercial_opens")
-    
-    data = update.message.web_app_data
-    if data and data.data:
-        logger.info(f"WebApp data from user {user_id}: {data.data[:100]}")
-        await update.message.reply_text(
-            "✅ Спасибо! Мы получили вашу информацию.\n"
-            "Наш менеджер свяжется с вами в ближайшее время."
-        )
-    else:
-        logger.info(f"WebApp opened by user {user_id}")
-        await update.message.reply_text(
-            "📄 Вы открыли коммерческое предложение KENTAVR MARKET.\n\n"
-            "Ознакомьтесь с информацией и возвращайтесь!\n"
-            "Если останутся вопросы, напишите нам."
-        )
-
-
-# ─────────────────────────────────────────────
-# ERROR HANDLER
-# ─────────────────────────────────────────────
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error("Unhandled exception: %s", context.error, exc_info=context.error)
-
-
-# ─────────────────────────────────────────────
-# ENTRY POINT
-# ─────────────────────────────────────────────
-
-async def async_main():
-    """Асинхронная инициализация и запуск бота"""
-    await init_db()
-    
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_error_handler(error_handler)
-
-    broadcast_handler = ConversationHandler(
-        entry_points=[CommandHandler("broadcast", cmd_broadcast_start)],
-        states={
-            BROADCAST_WAITING: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", cmd_broadcast_cancel)],
-    )
-
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("admin", cmd_admin))
-    app.add_handler(broadcast_handler)
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, web_app_handler))
-    app.add_handler(InlineQueryHandler(inline_query_handler))
-
-    logger.info("Bot started successfully. Polling...")
-    
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-    
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        logger.info("Shutting down...")
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-
-
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set. Add it to environment secrets.")
-    
-    if not ADMIN_IDS:
-        logger.warning("⚠️ ADMIN_IDS not set! /admin command will be available to everyone!")
-    
-    # Очистка вебхука
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        data = json.dumps({"drop_pending_updates": True}).encode()
-        req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
-        urllib.request.urlopen(req, timeout=5)
-        logger.info("Webhook cleared")
-    except Exception as e:
-        logger.warning(f"Webhook clear failed: {e}")
-
-    # Запускаем health server в отдельном потоке
-    health_thread = threading.Thread(target=_start_health_server, daemon=True)
-    health_thread.start()
-
-    # Запускаем основную асинхронную функцию
-    try:
-        asyncio.run(async_main())
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
-
-
-if __name__ == "__main__":
-    main()
