@@ -22,7 +22,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 PLATFORM_URL = os.getenv("PLATFORM_URL", "https://kentavr.world/?ref=kentavrmarket").strip()
-LANDING_URL = os.getenv("LANDING_URL", "https://kentavr.world").strip()  # Твой лендинг для мини-аппс
+LANDING_URL = os.getenv("LANDING_URL", "https://landing-kentavr-production.up.railway.app").strip()  # Твой лендинг для мини-аппс
 DB_PATH = "kentavr_stats.db"
 
 BROADCAST_WAITING = 1
