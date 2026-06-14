@@ -624,3 +624,54 @@ async def web_app_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
     logger.error(f"Unhandled error: {context.error}")
+# ========== ЗАПУСК ==========
+async def async_main():
+    await init_db()
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_error_handler(error_handler)
+    
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("admin", cmd_admin))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("stats", cmd_stats_detailed))
+    app.add_handler(CommandHandler("users", cmd_users_list))
+    app.add_handler(CommandHandler("export", cmd_export_data))
+    app.add_handler(ConversationHandler(
+        entry_points=[CommandHandler("broadcast", cmd_broadcast_start)],
+        states={BROADCAST_WAITING: [MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)]},
+        fallbacks=[CommandHandler("cancel", cmd_broadcast_cancel)],
+    ))
+    app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, web_app_handler))
+    
+    logger.info("🚀 Бот KENTAVR MARKET успешно запущен!")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except:
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+
+
+def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN не установлен! Добавь переменную в Railway")
+    if not ADMIN_IDS:
+        logger.warning("⚠️ ADMIN_IDS не установлен! Команда /admin доступна всем")
+    try:
+        req = urllib.request.Request(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", data=json.dumps({"drop_pending_updates": True}).encode(), headers={'Content-Type': 'application/json'})
+        urllib.request.urlopen(req, timeout=5)
+        logger.info("Webhook очищен")
+    except:
+        pass
+    threading.Thread(target=_start_health_server, daemon=True).start()
+    asyncio.run(async_main())
+
+
+if __name__ == "__main__":
+    main()
