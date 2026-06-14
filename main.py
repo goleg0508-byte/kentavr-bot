@@ -6,7 +6,7 @@ import aiosqlite
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -22,6 +22,7 @@ load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 PLATFORM_URL = os.getenv("PLATFORM_URL", "https://kentavr.world/?ref=kentavrmarket").strip()
+LANDING_URL = os.getenv("LANDING_URL", "https://kentavr.world").strip()  # Твой лендинг для мини-аппс
 DB_PATH = "kentavr_stats.db"
 
 BROADCAST_WAITING = 1
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
-# HEALTH SERVER (required for Railway deployment)
+# HEALTH SERVER
 # ─────────────────────────────────────────────
 
 class _HealthHandler(BaseHTTPRequestHandler):
@@ -77,7 +78,7 @@ async def init_db():
         """)
         keys = (
             "starts", "buyer_opens", "seller_opens", "ttk_opens",
-            "platform_clicks",
+            "platform_clicks", "commercial_opens",
         )
         for key in keys:
             await db.execute(
@@ -144,6 +145,7 @@ def screen_main():
         [InlineKeyboardButton("🛒 Я покупатель", callback_data="buyer")],
         [InlineKeyboardButton("🏪 Я продавец", callback_data="seller")],
         [InlineKeyboardButton("💎 Хочу узнать про ТТК", callback_data="ttk")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("🚀 Перейти на платформу", callback_data="goto_platform")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -164,6 +166,7 @@ def screen_buyer():
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
         [InlineKeyboardButton("📖 Узнать подробнее", callback_data="buyer_detail")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -183,6 +186,7 @@ def screen_buyer_detail():
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("⬅️ Назад", callback_data="buyer")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
@@ -203,6 +207,7 @@ def screen_seller():
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
         [InlineKeyboardButton("📖 Узнать подробнее", callback_data="seller_detail")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -222,6 +227,7 @@ def screen_seller_detail():
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("⬅️ Назад", callback_data="seller")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
@@ -244,6 +250,7 @@ def screen_ttk():
         [InlineKeyboardButton("💰 В чём выгода?", callback_data="ttk_benefit")],
         [InlineKeyboardButton("⭐ Почему это уникально?", callback_data="ttk_unique")],
         [InlineKeyboardButton("🚀 Как начать?", callback_data="ttk_start")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -260,6 +267,7 @@ def screen_ttk_crypto():
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
@@ -279,6 +287,7 @@ def screen_ttk_benefit():
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
@@ -296,6 +305,7 @@ def screen_ttk_unique():
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
@@ -312,6 +322,7 @@ def screen_ttk_start():
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -326,6 +337,7 @@ def screen_platform():
     )
     keyboard = [
         [InlineKeyboardButton("🚀 Открыть KENTAVR MARKET", url=PLATFORM_URL)],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -469,6 +481,21 @@ async def cmd_broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # ─────────────────────────────────────────────
+# WEB APP HANDLER (отслеживание открытия мини-аппс)
+# ─────────────────────────────────────────────
+
+async def web_app_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик данных из Web App (если нужно)"""
+    data = update.message.web_app_data
+    if data:
+        logger.info(f"WebApp data received: {data.data}")
+        await update.message.reply_text("Спасибо! Мы получили вашу информацию.")
+    else:
+        await increment_stat("commercial_opens")
+        logger.info("Commercial proposal WebApp opened")
+
+
+# ─────────────────────────────────────────────
 # ERROR HANDLER
 # ─────────────────────────────────────────────
 
@@ -501,15 +528,15 @@ async def async_main():
     app.add_handler(CommandHandler("admin", cmd_admin))
     app.add_handler(broadcast_handler)
     app.add_handler(CallbackQueryHandler(button_handler))
+    # Обработчик данных из Web App (опционально)
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, web_app_handler))
 
     logger.info("Bot started successfully. Polling...")
     
-    # Запускаем бота с обработкой сигналов остановки
     await app.initialize()
     await app.start()
     await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     
-    # Держим бота запущенным
     try:
         while True:
             await asyncio.sleep(3600)
@@ -523,6 +550,15 @@ async def async_main():
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN is not set. Add it to environment secrets.")
+    
+    # Удаляем старые вебхуки перед запуском
+    try:
+        import requests
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", 
+                     json={"drop_pending_updates": True}, timeout=5)
+        logger.info("Webhook cleared")
+    except Exception as e:
+        logger.warning(f"Webhook clear failed: {e}")
 
     # Запускаем health server в отдельном потоке
     health_thread = threading.Thread(target=_start_health_server, daemon=True)
