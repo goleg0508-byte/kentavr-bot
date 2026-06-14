@@ -483,4 +483,254 @@ def screen_platform():
         "Сейчас откроется <b>KENTAVR MARKET</b>.\n\n"
         "<blockquote>Познакомься с возможностями сообщества, изучи предложения участников "
         "и выбери направление, которое подходит именно тебе.</blockquote>"
-  
+    )
+    keyboard = [
+        [InlineKeyboardButton("🚀 Открыть KENTAVR MARKET", url=PLATFORM_URL)],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+SCREENS = {
+    "main": screen_main,
+    "buyer": screen_buyer,
+    "buyer_detail": screen_buyer_detail,
+    "seller": screen_seller,
+    "seller_detail": screen_seller_detail,
+    "ttk": screen_ttk,
+    "ttk_crypto": screen_ttk_crypto,
+    "ttk_benefit": screen_ttk_benefit,
+    "ttk_unique": screen_ttk_unique,
+    "ttk_start": screen_ttk_start,
+    "goto_platform": screen_platform,
+}
+
+STAT_MAP = {
+    "buyer": "buyer_opens",
+    "seller": "seller_opens",
+    "ttk": "ttk_opens",
+    "goto_platform": "platform_clicks",
+}
+
+
+# ─────────────────────────────────────────────
+# RENDER ENGINE (с поддержкой картинок)
+# ─────────────────────────────────────────────
+
+async def render_screen(
+    screen_key: str,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    is_new: bool = False,
+):
+    user_id = update.effective_user.id
+    await save_user_session(user_id, screen_key)
+    
+    builder = SCREENS.get(screen_key, screen_main)
+    text, markup = builder()
+
+    if screen_key in STAT_MAP:
+        await increment_stat(STAT_MAP[screen_key])
+
+    if is_new:
+        image_url = SCREEN_IMAGES.get(screen_key)
+        if image_url:
+            await update.message.reply_photo(
+                photo=image_url,
+                caption=text,
+                reply_markup=markup,
+                parse_mode="HTML"
+            )
+        else:
+            await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+        return
+
+    query = update.callback_query
+    try:
+        # При редактировании сообщения картинку не меняем (только текст)
+        await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise
+
+
+# ─────────────────────────────────────────────
+# ADMIN COMMANDS
+# ─────────────────────────────────────────────
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список доступных команд"""
+    user_id = update.effective_user.id
+    is_admin_user = is_admin(user_id)
+    
+    text = "🤖 <b>Доступные команды</b>\n\n"
+    text += "👤 <b>Для всех пользователей:</b>\n"
+    text += "  /start - Запустить бота\n"
+    text += "  /help  - Показать это сообщение\n\n"
+    
+    if is_admin_user:
+        text += "🔐 <b>Команды администратора:</b>\n"
+        text += "  /admin     - Краткая статистика\n"
+        text += "  /stats     - Детальная статистика\n"
+        text += "  /users     - Список пользователей\n"
+        text += "  /export    - Экспорт данных (CSV)\n"
+        text += "  /broadcast - Сделать рассылку\n"
+        text += "  /help      - Это сообщение\n\n"
+    
+    text += "<i>Бот автоматически обновляется, все команды доступны сразу после деплоя.</i>"
+    
+    if is_admin_user:
+        keyboard = [
+            [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+            [InlineKeyboardButton("📢 Рассылка", callback_data="admin_broadcast")],
+            [InlineKeyboardButton("👥 Пользователи", callback_data="admin_users")],
+            [InlineKeyboardButton("📥 Экспорт CSV", callback_data="admin_export")],
+            [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+        ]
+        await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
+    else:
+        await update.message.reply_text(text, parse_mode="HTML")
+
+
+async def cmd_stats_detailed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Детальная статистика для админа"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return
+    
+    stats = await get_stats()
+    
+    text = (
+        "📊 <b>ДЕТАЛЬНАЯ СТАТИСТИКА</b>\n"
+        "╔════════════════════════════════╗\n\n"
+        
+        "👥 <b>Пользователи:</b>\n"
+        f"   • Всего: <code>{stats.get('unique_users', 0)}</code>\n"
+        f"   • Активных сегодня: <code>{stats.get('active_today', 0)}</code>\n"
+        f"   • Всего действий: <code>{stats.get('total_actions', 0)}</code>\n\n"
+        
+        "📈 <b>Активность:</b>\n"
+        f"   • /start: <code>{stats.get('starts', 0)}</code>\n"
+        f"   • Покупатель: <code>{stats.get('buyer_opens', 0)}</code>\n"
+        f"   • Продавец: <code>{stats.get('seller_opens', 0)}</code>\n"
+        f"   • ТТК: <code>{stats.get('ttk_opens', 0)}</code>\n"
+        f"   • Платформа: <code>{stats.get('platform_clicks', 0)}</code>\n\n"
+        
+        "📄 <b>Коммерческое предложение:</b>\n"
+        f"   • Открытий: <code>{stats.get('commercial_opens', 0)}</code>\n\n"
+        
+        "╚════════════════════════════════╝\n"
+        "<i>Данные обновляются в реальном времени</i>"
+    )
+    
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+async def cmd_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список последних пользователей"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return
+    
+    user_ids = await get_all_user_ids()
+    total_users = len(user_ids)
+    
+    if total_users == 0:
+        await update.message.reply_text("📭 Пока нет пользователей.")
+        return
+    
+    last_20 = user_ids[-20:][::-1]
+    
+    text = f"👥 <b>Пользователи бота</b>\n\n"
+    text += f"📊 Всего: <code>{total_users}</code>\n"
+    text += f"📋 Последние 20:\n\n"
+    
+    for i, uid in enumerate(last_20, 1):
+        text += f"   {i}. <code>{uid}</code>\n"
+    
+    text += f"\n<i>Полный список можно экспортировать через /export</i>"
+    
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+async def cmd_export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Экспорт данных в CSV"""
+    if not is_admin(update.effective_user.id):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return
+    
+    status_msg = await update.message.reply_text("⏳ Формирую отчёт...")
+    
+    stats = await get_stats()
+    user_ids = await get_all_user_ids()
+    
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    writer.writerow(['Метрика', 'Значение'])
+    writer.writerow(['Всего пользователей', stats.get('unique_users', 0)])
+    writer.writerow(['Активных сегодня', stats.get('active_today', 0)])
+    writer.writerow(['Всего действий', stats.get('total_actions', 0)])
+    writer.writerow(['/start', stats.get('starts', 0)])
+    writer.writerow(['Покупатель', stats.get('buyer_opens', 0)])
+    writer.writerow(['Продавец', stats.get('seller_opens', 0)])
+    writer.writerow(['ТТК', stats.get('ttk_opens', 0)])
+    writer.writerow(['Переходов на платформу', stats.get('platform_clicks', 0)])
+    writer.writerow(['Открытий КП', stats.get('commercial_opens', 0)])
+    writer.writerow([])
+    writer.writerow(['ID пользователей'])
+    for uid in user_ids:
+        writer.writerow([uid])
+    
+    output.seek(0)
+    await status_msg.delete()
+    
+    await update.message.reply_document(
+        document=io.BytesIO(output.getvalue().encode('utf-8')),
+        filename=f"kentavr_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        caption="📊 Экспорт статистики KENTAVR MARKET"
+    )
+
+
+# ─────────────────────────────────────────────
+# HANDLERS
+# ─────────────────────────────────────────────
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    await asyncio.gather(
+        increment_stat("starts"),
+        register_user(user_id),
+    )
+    await render_screen("main", update, context, is_new=True)
+    return ConversationHandler.END
+
+
+async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return
+    
+    stats = await get_stats()
+    text = (
+        "📊 <b>Статистика KENTAVR MARKET Bot</b>\n\n"
+        f"👥 Уникальных пользователей: <b>{stats.get('unique_users', 0)}</b>\n"
+        f"📅 Активных сегодня: <b>{stats.get('active_today', 0)}</b>\n"
+        f"🎯 Всего действий: <b>{stats.get('total_actions', 0)}</b>\n\n"
+        f"▶️ Запусков /start: <b>{stats.get('starts', 0)}</b>\n\n"
+        f"🛒 Открытий раздела покупателя: <b>{stats.get('buyer_opens', 0)}</b>\n"
+        f"🏪 Открытий раздела продавца: <b>{stats.get('seller_opens', 0)}</b>\n"
+        f"💎 Открытий раздела ТТК: <b>{stats.get('ttk_opens', 0)}</b>\n"
+        f"📄 Открытий коммерческого предложения: <b>{stats.get('commercial_opens', 0)}</b>\n\n"
+        f"🚀 Переходов на платформу: <b>{stats.get('platform_clicks', 0)}</b>\n\n"
+        "📣 Для рассылки используй /broadcast"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await render_screen(query.data, update, context)
