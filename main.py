@@ -4,6 +4,8 @@ import asyncio
 import threading
 import json
 import urllib.request
+import csv
+import io
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 
@@ -31,6 +33,15 @@ ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.
 
 DB_PATH = "kentavr_stats.db"
 BROADCAST_WAITING = 1
+
+# ========== КАРТИНКИ ДЛЯ ЭКРАНОВ ==========
+SCREEN_IMAGES = {
+    "main": "https://i.postimg.cc/RFsmw06x/Chat-GPT-Image-4-iun-2026-g-06-12-26.png",
+    "buyer": "https://i.postimg.cc/wTSw7dBP/Chat-GPT-Image-4-iun-2026-g-06-35-43.png",
+    "seller": "https://i.postimg.cc/TwFDCfFH/IMG-20260604-035610-329.png",
+    "ttk": "https://i.postimg.cc/fT5gqd27/Chat-GPT-Image-4-iun-2026-g-03-57-21.png",
+}
+# ==========================================
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -472,270 +483,4 @@ def screen_platform():
         "Сейчас откроется <b>KENTAVR MARKET</b>.\n\n"
         "<blockquote>Познакомься с возможностями сообщества, изучи предложения участников "
         "и выбери направление, которое подходит именно тебе.</blockquote>"
-    )
-    keyboard = [
-        [InlineKeyboardButton("🚀 Открыть KENTAVR MARKET", url=PLATFORM_URL)],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
-
-
-SCREENS = {
-    "main": screen_main,
-    "buyer": screen_buyer,
-    "buyer_detail": screen_buyer_detail,
-    "seller": screen_seller,
-    "seller_detail": screen_seller_detail,
-    "ttk": screen_ttk,
-    "ttk_crypto": screen_ttk_crypto,
-    "ttk_benefit": screen_ttk_benefit,
-    "ttk_unique": screen_ttk_unique,
-    "ttk_start": screen_ttk_start,
-    "goto_platform": screen_platform,
-}
-
-STAT_MAP = {
-    "buyer": "buyer_opens",
-    "seller": "seller_opens",
-    "ttk": "ttk_opens",
-    "goto_platform": "platform_clicks",
-}
-
-
-# ─────────────────────────────────────────────
-# RENDER ENGINE
-# ─────────────────────────────────────────────
-
-async def render_screen(
-    screen_key: str,
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-    is_new: bool = False,
-):
-    user_id = update.effective_user.id
-    await save_user_session(user_id, screen_key)
-    
-    builder = SCREENS.get(screen_key, screen_main)
-    text, markup = builder()
-
-    if screen_key in STAT_MAP:
-        await increment_stat(STAT_MAP[screen_key])
-
-    if is_new:
-        await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
-        return
-
-    query = update.callback_query
-    try:
-        await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
-    except BadRequest as e:
-        if "Message is not modified" not in str(e):
-            raise
-
-
-# ─────────────────────────────────────────────
-# HANDLERS
-# ─────────────────────────────────────────────
-
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await asyncio.gather(
-        increment_stat("starts"),
-        register_user(user_id),
-    )
-    await render_screen("main", update, context, is_new=True)
-    return ConversationHandler.END
-
-
-async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return
-    
-    stats = await get_stats()
-    text = (
-        "📊 <b>Статистика KENTAVR MARKET Bot</b>\n\n"
-        f"👥 Уникальных пользователей: <b>{stats.get('unique_users', 0)}</b>\n"
-        f"📅 Активных сегодня: <b>{stats.get('active_today', 0)}</b>\n"
-        f"🎯 Всего действий: <b>{stats.get('total_actions', 0)}</b>\n\n"
-        f"▶️ Запусков /start: <b>{stats.get('starts', 0)}</b>\n\n"
-        f"🛒 Открытий раздела покупателя: <b>{stats.get('buyer_opens', 0)}</b>\n"
-        f"🏪 Открытий раздела продавца: <b>{stats.get('seller_opens', 0)}</b>\n"
-        f"💎 Открытий раздела ТТК: <b>{stats.get('ttk_opens', 0)}</b>\n"
-        f"📄 Открытий коммерческого предложения: <b>{stats.get('commercial_opens', 0)}</b>\n\n"
-        f"🚀 Переходов на платформу: <b>{stats.get('platform_clicks', 0)}</b>\n\n"
-        "📣 Для рассылки используй /broadcast"
-    )
-    await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    
-    if query.data == "commercial":
-        await increment_stat("commercial_opens")
-    
-    await render_screen(query.data, update, context)
-
-
-async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return
-    
-    user_ids = await get_all_user_ids()
-    await update.message.reply_text(
-        f"📣 <b>Рассылка</b>\n\n"
-        f"Аудитория: <b>{len(user_ids)}</b> пользователей.\n\n"
-        "Напиши текст сообщения — поддерживается HTML-разметка.\n\n"
-        "<i>Для отмены отправь /cancel</i>",
-        parse_mode="HTML",
-    )
-    return BROADCAST_WAITING
-
-
-async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    
-    if not is_admin(user_id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return ConversationHandler.END
-    
-    user_ids = await get_all_user_ids()
-    message_text = update.message.text
-    
-    status_msg = await update.message.reply_text(
-        f"⏳ Отправляю сообщение {len(user_ids)} пользователям..."
-    )
-    
-    sent, failed = 0, 0
-    for i, uid in enumerate(user_ids):
-        try:
-            await context.bot.send_message(chat_id=uid, text=message_text, parse_mode="HTML")
-            sent += 1
-        except Forbidden:
-            failed += 1
-        except TelegramError as e:
-            logger.warning("Broadcast error for user %d: %s", uid, e)
-            failed += 1
-        
-        if (i + 1) % 30 == 0:
-            await asyncio.sleep(1)
-    
-    await status_msg.edit_text(
-        f"✅ <b>Рассылка завершена</b>\n\n"
-        f"📨 Доставлено: <b>{sent}</b>\n"
-        f"❌ Ошибок: <b>{failed}</b>",
-        parse_mode="HTML",
-    )
-    return ConversationHandler.END
-
-
-async def cmd_broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Отменено.")
-    return ConversationHandler.END
-
-
-async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    from telegram import InlineQueryResultArticle, InputTextMessageContent
-    
-    results = [
-        InlineQueryResultArticle(
-            id="1",
-            title="KENTAVR MARKET - Социальный маркетплейс",
-            description="Узнай больше о платформе",
-            input_message_content=InputTextMessageContent(
-                f"🚀 <b>KENTAVR MARKET</b>\n\n{PLATFORM_URL}",
-                parse_mode="HTML"
-            ),
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🚀 Открыть", url=PLATFORM_URL)],
-            ])
-        ),
-    ]
-    await update.inline_query.answer(results, cache_time=300)
-
-
-async def web_app_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await increment_stat("commercial_opens")
-    await update.message.reply_text("✅ Спасибо за интерес к коммерческому предложению!")
-
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error("Unhandled exception: %s", context.error, exc_info=context.error)
-
-
-# ─────────────────────────────────────────────
-# ENTRY POINT
-# ─────────────────────────────────────────────
-
-async def async_main():
-    await init_db()
-    
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_error_handler(error_handler)
-
-    broadcast_handler = ConversationHandler(
-        entry_points=[CommandHandler("broadcast", cmd_broadcast_start)],
-        states={
-            BROADCAST_WAITING: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)
-            ]
-        },
-        fallbacks=[CommandHandler("cancel", cmd_broadcast_cancel)],
-    )
-
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("admin", cmd_admin))
-    app.add_handler(broadcast_handler)
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, web_app_handler))
-    app.add_handler(InlineQueryHandler(inline_query_handler))
-
-    logger.info("Bot started successfully!")
-    
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-    
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-
-
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set")
-    
-    if not ADMIN_IDS:
-        logger.warning("⚠️ ADMIN_IDS not set! /admin command available to everyone!")
-    
-    # Очистка вебхука
-    try:
-        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
-        data = json.dumps({"drop_pending_updates": True}).encode()
-        req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
-        urllib.request.urlopen(req, timeout=5)
-        logger.info("Webhook cleared")
-    except Exception as e:
-        logger.warning(f"Webhook clear failed: {e}")
-
-    threading.Thread(target=_start_health_server, daemon=True).start()
-    
-    try:
-        asyncio.run(async_main())
-    except KeyboardInterrupt:
-        logger.info("Bot stopped")
-
-
-if __name__ == "__main__":
-    main()
+  
