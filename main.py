@@ -734,3 +734,199 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await render_screen(query.data, update, context)
+
+
+async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик inline-кнопок админ-панели"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await query.edit_message_text("⛔ Доступ запрещён.")
+        return
+    
+    data = query.data
+    
+    if data == "admin_stats":
+        await cmd_stats_detailed(update, context)
+    elif data == "admin_broadcast":
+        await cmd_broadcast_start(update, context)
+    elif data == "admin_users":
+        await cmd_users_list(update, context)
+    elif data == "admin_export":
+        await cmd_export_data(update, context)
+    elif data == "main":
+        await render_screen("main", update, context)
+    else:
+        await render_screen(data, update, context)
+
+
+async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return
+    
+    user_ids = await get_all_user_ids()
+    await update.message.reply_text(
+        f"📣 <b>Рассылка</b>\n\n"
+        f"Аудитория: <b>{len(user_ids)}</b> пользователей.\n\n"
+        "Напиши текст сообщения — поддерживается HTML-разметка.\n\n"
+        "<i>Для отмены отправь /cancel</i>",
+        parse_mode="HTML",
+    )
+    return BROADCAST_WAITING
+
+
+async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return ConversationHandler.END
+    
+    user_ids = await get_all_user_ids()
+    message_text = update.message.text
+    
+    status_msg = await update.message.reply_text(
+        f"⏳ Отправляю сообщение {len(user_ids)} пользователям..."
+    )
+    
+    sent, failed = 0, 0
+    for i, uid in enumerate(user_ids):
+        try:
+            await context.bot.send_message(chat_id=uid, text=message_text, parse_mode="HTML")
+            sent += 1
+        except Forbidden:
+            failed += 1
+        except TelegramError as e:
+            logger.warning("Broadcast error for user %d: %s", uid, e)
+            failed += 1
+        
+        if (i + 1) % 30 == 0:
+            await asyncio.sleep(1)
+    
+    await status_msg.edit_text(
+        f"✅ <b>Рассылка завершена</b>\n\n"
+        f"📨 Доставлено: <b>{sent}</b>\n"
+        f"❌ Ошибок: <b>{failed}</b>",
+        parse_mode="HTML",
+    )
+    return ConversationHandler.END
+
+
+async def cmd_broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Отменено.")
+    return ConversationHandler.END
+
+
+async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from telegram import InlineQueryResultArticle, InputTextMessageContent
+    
+    results = [
+        InlineQueryResultArticle(
+            id="1",
+            title="KENTAVR MARKET - Социальный маркетплейс",
+            description="Узнай больше о платформе",
+            input_message_content=InputTextMessageContent(
+                f"🚀 <b>KENTAVR MARKET</b>\n\n{PLATFORM_URL}",
+                parse_mode="HTML"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🚀 Открыть", url=PLATFORM_URL)],
+            ])
+        ),
+    ]
+    await update.inline_query.answer(results, cache_time=300)
+
+
+async def web_app_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await increment_stat("commercial_opens")
+    await update.message.reply_text("✅ Спасибо за интерес к коммерческому предложению!")
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error("Unhandled exception: %s", context.error, exc_info=context.error)
+
+
+# ─────────────────────────────────────────────
+# ENTRY POINT
+# ─────────────────────────────────────────────
+
+async def async_main():
+    await init_db()
+    
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_error_handler(error_handler)
+
+    broadcast_handler = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", cmd_broadcast_start)],
+        states={
+            BROADCAST_WAITING: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cmd_broadcast_cancel)],
+    )
+
+    # Основные команды
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("admin", cmd_admin))
+    app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("stats", cmd_stats_detailed))
+    app.add_handler(CommandHandler("users", cmd_users_list))
+    app.add_handler(CommandHandler("export", cmd_export_data))
+    app.add_handler(broadcast_handler)
+    
+    # Обработчики кнопок
+    app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    
+    # Дополнительные обработчики
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, web_app_handler))
+    app.add_handler(InlineQueryHandler(inline_query_handler))
+
+    logger.info("Bot started successfully!")
+    
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+
+
+def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is not set")
+    
+    if not ADMIN_IDS:
+        logger.warning("⚠️ ADMIN_IDS not set! /admin command available to everyone!")
+    
+    # Очистка вебхука
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        data = json.dumps({"drop_pending_updates": True}).encode()
+        req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+        urllib.request.urlopen(req, timeout=5)
+        logger.info("Webhook cleared")
+    except Exception as e:
+        logger.warning(f"Webhook clear failed: {e}")
+
+    threading.Thread(target=_start_health_server, daemon=True).start()
+    
+    try:
+        asyncio.run(async_main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped")
+
+
+if __name__ == "__main__":
+    main()
