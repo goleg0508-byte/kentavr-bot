@@ -82,7 +82,7 @@ async def init_db():
                 for key in ("starts", "buyer_opens", "seller_opens", "ttk_opens", "platform_clicks", "commercial_opens"):
                     await conn.execute("INSERT INTO stats (key, value) VALUES ($1, 0) ON CONFLICT (key) DO NOTHING", key)
             USE_POSTGRES = True
-            logger.info("PostgreSQL initialized")
+            logger.info("✅ PostgreSQL initialized")
             return
         except Exception as e:
             logger.warning(f"PostgreSQL failed: {e}")
@@ -95,7 +95,7 @@ async def init_db():
         for key in ("starts", "buyer_opens", "seller_opens", "ttk_opens", "platform_clicks", "commercial_opens"):
             await db.execute("INSERT OR IGNORE INTO stats (key, value) VALUES (?, 0)", (key,))
         await db.commit()
-    logger.info("SQLite initialized")
+    logger.info("✅ SQLite initialized")
 
 
 async def increment_stat(key: str):
@@ -436,178 +436,4 @@ async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     stats = await get_stats()
     text = (
-        f"📊 <b>Статистика KENTAVR MARKET Bot</b>\n\n"
-        f"👥 Уникальных пользователей: <b>{stats.get('unique_users', 0)}</b>\n"
-        f"📅 Активных сегодня: <b>{stats.get('active_today', 0)}</b>\n"
-        f"🎯 Всего действий: <b>{stats.get('total_actions', 0)}</b>\n\n"
-        f"▶️ Запусков /start: <b>{stats.get('starts', 0)}</b>\n\n"
-        f"🛒 Открытий раздела покупателя: <b>{stats.get('buyer_opens', 0)}</b>\n"
-        f"🏪 Открытий раздела продавца: <b>{stats.get('seller_opens', 0)}</b>\n"
-        f"💎 Открытий раздела ТТК: <b>{stats.get('ttk_opens', 0)}</b>\n"
-        f"📄 Открытий коммерческого предложения: <b>{stats.get('commercial_opens', 0)}</b>\n\n"
-        f"🚀 Переходов на платформу: <b>{stats.get('platform_clicks', 0)}</b>"
-    )
-    await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    text = "🤖 <b>Доступные команды</b>\n\n/start - Запустить бота\n/help - Помощь"
-    if is_admin(user_id):
-        text += "\n\n🔐 <b>Админ-команды:</b>\n/admin - Статистика\n/stats - Детальная статистика\n/users - Список пользователей\n/export - Экспорт CSV\n/broadcast - Рассылка"
-    await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def cmd_stats_detailed(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return
-    stats = await get_stats()
-    text = (
-        f"📊 <b>ДЕТАЛЬНАЯ СТАТИСТИКА</b>\n\n"
-        f"👥 Всего пользователей: <code>{stats.get('unique_users', 0)}</code>\n"
-        f"📅 Активных сегодня: <code>{stats.get('active_today', 0)}</code>\n"
-        f"🎯 Всего действий: <code>{stats.get('total_actions', 0)}</code>\n\n"
-        f"▶️ /start: <code>{stats.get('starts', 0)}</code>\n"
-        f"🛒 Покупатель: <code>{stats.get('buyer_opens', 0)}</code>\n"
-        f"🏪 Продавец: <code>{stats.get('seller_opens', 0)}</code>\n"
-        f"💎 ТТК: <code>{stats.get('ttk_opens', 0)}</code>\n"
-        f"🚀 Платформа: <code>{stats.get('platform_clicks', 0)}</code>"
-    )
-    await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def cmd_users_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return
-    users = await get_all_user_ids()
-    if not users:
-        await update.message.reply_text("📭 Нет пользователей")
-        return
-    text = f"👥 <b>Пользователи бота</b>\n\n📊 Всего: <code>{len(users)}</code>\n\n📋 Последние 20:\n"
-    for i, uid in enumerate(users[-20:][::-1], 1):
-        text += f"{i}. <code>{uid}</code>\n"
-    await update.message.reply_text(text, parse_mode="HTML")
-
-
-async def cmd_export_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return
-    users = await get_all_user_ids()
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['User ID'])
-    for uid in users:
-        writer.writerow([uid])
-    output.seek(0)
-    await update.message.reply_document(
-        document=io.BytesIO(output.getvalue().encode('utf-8')),
-        filename=f"users_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-        caption="📊 Экспорт пользователей"
-    )
-
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await render_screen(query.data, update, context)
-
-
-async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return
-    users = await get_all_user_ids()
-    await update.message.reply_text(
-        f"📣 <b>Рассылка</b>\n\nАудитория: <b>{len(users)}</b>\n\nНапиши текст сообщения. /cancel - отмена",
-        parse_mode="HTML"
-    )
-    return BROADCAST_WAITING
-
-
-async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
-        await update.message.reply_text("⛔ Доступ запрещён.")
-        return ConversationHandler.END
-    users = await get_all_user_ids()
-    msg = update.message.text
-    sent = failed = 0
-    status = await update.message.reply_text(f"⏳ Отправляю {len(users)} пользователям...")
-    for i, uid in enumerate(users):
-        try:
-            await context.bot.send_message(uid, msg, parse_mode="HTML")
-            sent += 1
-        except:
-            failed += 1
-        if (i+1) % 30 == 0:
-            await asyncio.sleep(1)
-    await status.edit_text(f"✅ Доставлено: {sent}\n❌ Ошибок: {failed}")
-    return ConversationHandler.END
-
-
-async def cmd_broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Рассылка отменена")
-    return ConversationHandler.END
-
-
-async def web_app_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await increment_stat("commercial_opens")
-    await update.message.reply_text("✅ Спасибо за интерес к коммерческому предложению!")
-
-
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Unhandled error: {context.error}")
-
-
-# ========== ЗАПУСК ==========
-async def async_main():
-    await init_db()
-    app = Application.builder().token(BOT_TOKEN).build()
-    app.add_error_handler(error_handler)
-    
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("admin", cmd_admin))
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CommandHandler("stats", cmd_stats_detailed))
-    app.add_handler(CommandHandler("users", cmd_users_list))
-    app.add_handler(CommandHandler("export", cmd_export_data))
-    app.add_handler(ConversationHandler(
-        entry_points=[CommandHandler("broadcast", cmd_broadcast_start)],
-        states={BROADCAST_WAITING: [MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)]},
-        fallbacks=[CommandHandler("cancel", cmd_broadcast_cancel)],
-    ))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, web_app_handler))
-    
-    logger.info("🚀 Бот KENTAVR MARKET успешно запущен!")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except:
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-
-
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN не установлен! Добавь переменную в Railway")
-    if not ADMIN_IDS:
-        logger.warning("⚠️ ADMIN_IDS не установлен! Команда /admin доступна всем")
-    try:
-        req = urllib.request.Request(f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook", data=json.dumps({"drop_pending_updates": True}).encode(), headers={'Content-Type': 'application/json'})
-        urllib.request.urlopen(req, timeout=5)
-        logger.info("Webhook очищен")
-    except:
-        pass
-    threading.Thread(target=_start_health_server, daemon=True).start()
-    asyncio.run(async_main())
-
-
-if __name__ == "__main__":
-    main()
+        f
