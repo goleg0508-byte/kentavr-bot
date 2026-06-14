@@ -756,3 +756,176 @@ async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode="HTML",
     )
     return ConversationHandler.END
+async def cmd_broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return ConversationHandler.END
+    
+    await update.message.reply_text("❌ Рассылка отменена.")
+    return ConversationHandler.END
+
+
+# ─────────────────────────────────────────────
+# INLINE MODE HANDLER
+# ─────────────────────────────────────────────
+
+async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    from telegram import InlineQueryResultArticle, InputTextMessageContent
+    
+    results = [
+        InlineQueryResultArticle(
+            id="1",
+            title="KENTAVR MARKET - Социальный маркетплейс",
+            description="Узнай больше о платформе и торговом токене",
+            input_message_content=InputTextMessageContent(
+                f"🚀 <b>KENTAVR MARKET</b>\n\n"
+                f"Социальный маркетплейс нового поколения с торговым токеном ТТК.\n\n"
+                f"Перейти: {PLATFORM_URL}",
+                parse_mode="HTML"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🚀 Открыть KENTAVR MARKET", url=PLATFORM_URL)],
+                [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
+            ])
+        ),
+        InlineQueryResultArticle(
+            id="2",
+            title="Коммерческое предложение KENTAVR",
+            description="Подробная информация для партнёров",
+            input_message_content=InputTextMessageContent(
+                f"📄 <b>Коммерческое предложение KENTAVR MARKET</b>\n\n"
+                f"Откройте полную презентацию проекта в мини-приложении.",
+                parse_mode="HTML"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📄 Открыть КП", web_app=WebAppInfo(url=LANDING_URL))],
+            ])
+        ),
+        InlineQueryResultArticle(
+            id="3",
+            title="Что такое ТТК?",
+            description="Торговый токен KENTAVR - объяснение",
+            input_message_content=InputTextMessageContent(
+                f"💎 <b>Торговый Токен KENTAVR (ТТК)</b>\n\n"
+                f"Внутренний цифровой инструмент экосистемы для бонусов и cashback.",
+                parse_mode="HTML"
+            ),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("💎 Узнать про ТТК", callback_data="ttk")],
+            ])
+        )
+    ]
+    
+    await update.inline_query.answer(results, cache_time=300)
+
+
+# ─────────────────────────────────────────────
+# WEB APP HANDLER
+# ─────────────────────────────────────────────
+
+async def web_app_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    await increment_stat("webapp_opens")
+    await increment_stat("commercial_opens")
+    
+    data = update.message.web_app_data
+    if data and data.data:
+        logger.info(f"WebApp data from user {user_id}: {data.data[:100]}")
+        await update.message.reply_text(
+            "✅ Спасибо! Мы получили вашу информацию.\n"
+            "Наш менеджер свяжется с вами в ближайшее время."
+        )
+    else:
+        logger.info(f"WebApp opened by user {user_id}")
+        await update.message.reply_text(
+            "📄 Вы открыли коммерческое предложение KENTAVR MARKET.\n\n"
+            "Ознакомьтесь с информацией и возвращайтесь!\n"
+            "Если останутся вопросы, напишите нам."
+        )
+
+
+# ─────────────────────────────────────────────
+# ERROR HANDLER
+# ─────────────────────────────────────────────
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error("Unhandled exception: %s", context.error, exc_info=context.error)
+
+
+# ─────────────────────────────────────────────
+# ENTRY POINT
+# ─────────────────────────────────────────────
+
+async def async_main():
+    """Асинхронная инициализация и запуск бота"""
+    await init_db()
+    
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_error_handler(error_handler)
+
+    broadcast_handler = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", cmd_broadcast_start)],
+        states={
+            BROADCAST_WAITING: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)
+            ]
+        },
+        fallbacks=[CommandHandler("cancel", cmd_broadcast_cancel)],
+    )
+
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("admin", cmd_admin))
+    app.add_handler(broadcast_handler)
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, web_app_handler))
+    app.add_handler(InlineQueryHandler(inline_query_handler))
+
+    logger.info("Bot started successfully. Polling...")
+    
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("Shutting down...")
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+
+
+def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is not set. Add it to environment secrets.")
+    
+    if not ADMIN_IDS:
+        logger.warning("⚠️ ADMIN_IDS not set! /admin command will be available to everyone!")
+    
+    # Очистка вебхука
+    try:
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook"
+        data = json.dumps({"drop_pending_updates": True}).encode()
+        req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+        urllib.request.urlopen(req, timeout=5)
+        logger.info("Webhook cleared")
+    except Exception as e:
+        logger.warning(f"Webhook clear failed: {e}")
+
+    # Запускаем health server в отдельном потоке
+    health_thread = threading.Thread(target=_start_health_server, daemon=True)
+    health_thread.start()
+
+    # Запускаем основную асинхронную функцию
+    try:
+        asyncio.run(async_main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
+
+
+if __name__ == "__main__":
+    main()
