@@ -462,4 +462,297 @@ def screen_ttk():
         [InlineKeyboardButton("❓ Это криптовалюта?", callback_data="ttk_crypto")],
         [InlineKeyboardButton("💰 В чём выгода?", callback_data="ttk_benefit")],
         [InlineKeyboardButton("⭐ Почему это уникально?", callback_data="ttk_unique")],
-        [InlineKeyboardButton("🚀 Как начать?", callback_d
+        [InlineKeyboardButton("🚀 Как начать?", callback_data="ttk_start")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
+        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_ttk_crypto():
+    text = (
+        "<b>❓ Это криптовалюта?</b>\n\n"
+        "<b>ТТК</b> не является классической биржевой криптовалютой.\n\n"
+        "<blockquote>Это внутренний торговый токен, применяемый в системе <b>KENTAVR MARKET</b> "
+        "для бонусов, cashback и операций между участниками сообщества.</blockquote>\n\n"
+        "<i>Его ценность определяется активностью и товарооборотом внутри экосистемы, "
+        "а не биржевыми котировками.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
+        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_ttk_benefit():
+    text = (
+        "<b>💰 В чём выгода?</b>\n\n"
+        "Главная идея — объединение покупательской и предпринимательской активности "
+        "в единой среде.\n\n"
+        "<blockquote>Чем больше взаимодействий происходит внутри сообщества, тем активнее "
+        "развивается общий товарооборот и расширяются возможности для каждого "
+        "участника.</blockquote>\n\n"
+        "<i>ТТК служит связующим инструментом, который делает участие в системе "
+        "более предметным.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
+        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_ttk_unique():
+    text = (
+        "<b>⭐ Почему это уникально?</b>\n\n"
+        "<b>KENTAVR MARKET</b> сочетает возможности маркетплейса, делового сообщества "
+        "и токенизированной модели взаимодействия.\n\n"
+        "<blockquote>Такой подход формирует среду, где покупатели, продавцы и партнёры объединены "
+        "общей системой сотрудничества и внутреннего обмена ценностью.</blockquote>\n\n"
+        "<i>Это выходит за рамки привычного формата торговой площадки.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
+        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_ttk_start():
+    text = (
+        "<b>🚀 Как начать?</b>\n\n"
+        "<blockquote>Лучший способ разобраться в возможностях <b>KENTAVR MARKET</b> — "
+        "изучить систему изнутри.</blockquote>\n\n"
+        "<i>Перейди на платформу и выбери направление, которое интересно именно тебе: "
+        "покупки, продажи или партнёрство через ТТК.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
+        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_platform():
+    text = (
+        "<b>Отлично!</b>\n\n"
+        "Сейчас откроется <b>KENTAVR MARKET</b>.\n\n"
+        "<blockquote>Познакомься с возможностями сообщества, изучи предложения участников "
+        "и выбери направление, которое подходит именно тебе.</blockquote>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🚀 Открыть KENTAVR MARKET", url=PLATFORM_URL)],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url=LANDING_URL))],
+        [InlineKeyboardButton("👥 Пригласить друга", callback_data="referral")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_referral(user_id: int):
+    bot_username = os.getenv("BOT_USERNAME", "kentavr_bot")
+    text = (
+        "<b>👥 Пригласи друга в KENTAVR MARKET!</b>\n\n"
+        "Поделись ссылкой с друзьями и получай бонусы за каждого приглашённого!\n\n"
+        f"<blockquote>Твоя реферальная ссылка:\n"
+        f"<code>https://t.me/{bot_username}?start=ref_{user_id}</code></blockquote>\n\n"
+        "<i>Скопируй ссылку и отправь другу. Когда он зарегистрируется, вы оба получите бонусы!</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+SCREENS = {
+    "main": screen_main,
+    "buyer": screen_buyer,
+    "buyer_detail": screen_buyer_detail,
+    "seller": screen_seller,
+    "seller_detail": screen_seller_detail,
+    "ttk": screen_ttk,
+    "ttk_crypto": screen_ttk_crypto,
+    "ttk_benefit": screen_ttk_benefit,
+    "ttk_unique": screen_ttk_unique,
+    "ttk_start": screen_ttk_start,
+    "goto_platform": screen_platform,
+    "referral": screen_referral,
+}
+
+STAT_MAP = {
+    "buyer": "buyer_opens",
+    "seller": "seller_opens",
+    "ttk": "ttk_opens",
+    "goto_platform": "platform_clicks",
+}
+
+
+# ─────────────────────────────────────────────
+# RENDER ENGINE
+# ─────────────────────────────────────────────
+
+async def render_screen(
+    screen_key: str,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    is_new: bool = False,
+):
+    user_id = update.effective_user.id
+    await save_user_session(user_id, screen_key)
+    
+    builder = SCREENS.get(screen_key, screen_main)
+    
+    if screen_key == "referral":
+        text, markup = builder(user_id)
+    else:
+        text, markup = builder()
+
+    if screen_key in STAT_MAP:
+        await increment_stat(STAT_MAP[screen_key])
+    
+    if screen_key == "commercial" or "web_app" in str(screen_key):
+        await increment_stat("commercial_opens")
+
+    if is_new:
+        await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+        return
+
+    query = update.callback_query
+    try:
+        await query.edit_message_text(text, reply_markup=markup, parse_mode="HTML")
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            raise
+
+
+# ─────────────────────────────────────────────
+# HANDLERS — MAIN BOT
+# ─────────────────────────────────────────────
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    referral_code = None
+    if context.args and context.args[0].startswith("ref_"):
+        referral_code = context.args[0][4:]
+    
+    await asyncio.gather(
+        increment_stat("starts"),
+        register_user(user_id, referral_code),
+    )
+    await render_screen("main", update, context, is_new=True)
+    return ConversationHandler.END
+
+
+async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ Доступ запрещён. Эта команда только для администраторов.")
+        return
+    
+    stats = await get_stats()
+    text = (
+        "📊 <b>Статистика KENTAVR MARKET Bot</b>\n\n"
+        f"👥 Уникальных пользователей: <b>{stats.get('unique_users', 0)}</b>\n"
+        f"📅 Активных сегодня: <b>{stats.get('active_today', 0)}</b>\n"
+        f"🎯 Всего действий: <b>{stats.get('total_actions', 0)}</b>\n"
+        f"👥 Пришло по рефералке: <b>{stats.get('referrals', 0)}</b>\n\n"
+        f"▶️ Запусков /start: <b>{stats.get('starts', 0)}</b>\n\n"
+        f"🛒 Открытий раздела покупателя: <b>{stats.get('buyer_opens', 0)}</b>\n"
+        f"🏪 Открытий раздела продавца: <b>{stats.get('seller_opens', 0)}</b>\n"
+        f"💎 Открытий раздела ТТК: <b>{stats.get('ttk_opens', 0)}</b>\n"
+        f"📄 Открытий коммерческого предложения: <b>{stats.get('commercial_opens', 0)}</b>\n\n"
+        f"🚀 Переходов на платформу: <b>{stats.get('platform_clicks', 0)}</b>\n\n"
+        "📣 Для рассылки используй /broadcast\n"
+        "📊 Статистика обновляется в реальном времени"
+    )
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await render_screen(query.data, update, context)
+
+
+# ─────────────────────────────────────────────
+# HANDLERS — BROADCAST CONVERSATION
+# ─────────────────────────────────────────────
+
+async def cmd_broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return
+    
+    user_ids = await get_all_user_ids()
+    await update.message.reply_text(
+        f"📣 <b>Рассылка</b>\n\n"
+        f"Аудитория: <b>{len(user_ids)}</b> пользователей.\n\n"
+        "Напиши текст сообщения — поддерживается HTML-разметка "
+        "(<code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, <code>&lt;a href=...&gt;</code>).\n\n"
+        "<i>Для отмены отправь /cancel</i>",
+        parse_mode="HTML",
+    )
+    return BROADCAST_WAITING
+
+
+async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("⛔ Доступ запрещён.")
+        return ConversationHandler.END
+    
+    user_ids = await get_all_user_ids()
+    message_text = update.message.text
+    
+    status_msg = await update.message.reply_text(
+        f"⏳ Отправляю сообщение {len(user_ids)} пользователям..."
+    )
+    
+    sent, failed = 0, 0
+    for i, uid in enumerate(user_ids):
+        try:
+            await context.bot.send_message(chat_id=uid, text=message_text, parse_mode="HTML")
+            sent += 1
+        except Forbidden:
+            failed += 1
+        except TelegramError as e:
+            logger.warning("Broadcast error for user %d: %s", uid, e)
+            failed += 1
+        
+        if (i + 1) % 30 == 0:
+            await asyncio.sleep(1)
+        
+        if (i + 1) % 100 == 0:
+            await status_msg.edit_text(
+                f"⏳ Отправка...\n"
+                f"📨 Отправлено: {sent}\n"
+                f"❌ Ошибок: {failed}\n"
+                f"📊 Прогресс: {i+1}/{len(user_ids)}"
+            )
+    
+    await status_msg.edit_text(
+        f"✅ <b>Рассылка завершена</b>\n\n"
+        f"📨 Доставлено: <b>{sent}</b>\n"
+        f"❌ Ошибок: <b>{failed}</b>\n"
+        f"📊 Всего: <b>{len(user_ids)}</b> пользователей",
+        parse_mode="HTML",
+    )
+    return ConversationHandler.END
