@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/":
+        if self.path == "/" or self.path == "/health":
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
@@ -53,7 +53,6 @@ class _HealthHandler(BaseHTTPRequestHandler):
 
 def _start_health_server():
     port = int(os.getenv("PORT", "8080"))
-    # Важно: слушаем на 0.0.0.0 для Railway
     server = HTTPServer(("0.0.0.0", port), _HealthHandler)
     logger.info("Health server started on port %s", port)
     server.serve_forever()
@@ -85,6 +84,7 @@ async def init_db():
                 "INSERT OR IGNORE INTO stats (key, value) VALUES (?, 0)", (key,)
             )
         await db.commit()
+        logger.info("Database initialized successfully")
 
 
 async def increment_stat(key: str):
@@ -124,7 +124,7 @@ async def get_all_user_ids() -> list[int]:
 
 
 # ─────────────────────────────────────────────
-# SCREEN DEFINITIONS (unchanged)
+# SCREEN DEFINITIONS
 # ─────────────────────────────────────────────
 
 def screen_main():
@@ -480,19 +480,10 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # ENTRY POINT
 # ─────────────────────────────────────────────
 
-def main():
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set. Add it to environment secrets.")
-
-    # Запускаем health server в отдельном потоке
-    health_thread = threading.Thread(target=_start_health_server, daemon=True)
-    health_thread.start()
-
-    # Запускаем инициализацию БД в текущем event loop
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(init_db())
-
+async def async_main():
+    """Асинхронная инициализация и запуск бота"""
+    await init_db()
+    
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_error_handler(error_handler)
 
@@ -512,7 +503,36 @@ def main():
     app.add_handler(CallbackQueryHandler(button_handler))
 
     logger.info("Bot started successfully. Polling...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Запускаем бота с обработкой сигналов остановки
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+    
+    # Держим бота запущенным
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        logger.info("Shutting down...")
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+
+
+def main():
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is not set. Add it to environment secrets.")
+
+    # Запускаем health server в отдельном потоке
+    health_thread = threading.Thread(target=_start_health_server, daemon=True)
+    health_thread.start()
+
+    # Запускаем основную асинхронную функцию
+    try:
+        asyncio.run(async_main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user")
 
 
 if __name__ == "__main__":
