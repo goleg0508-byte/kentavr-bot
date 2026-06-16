@@ -197,7 +197,7 @@ def screen_main():
         [InlineKeyboardButton("🛒 Я покупатель", callback_data="buyer")],
         [InlineKeyboardButton("🏪 Я продавец", callback_data="seller")],
         [InlineKeyboardButton("💎 Хочу узнать про ТТК", callback_data="ttk")],
-        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url="http://kentavrmarket.shop"))],
+        [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url="https://kentavrmarket.shop"))],
         [InlineKeyboardButton("🚀 Перейти на платформу", callback_data="goto_platform")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
