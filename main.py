@@ -39,24 +39,17 @@ EDIT_IMAGE_SCREEN = 4
 EDIT_IMAGE_URL    = 5
 
 SCREEN_IMAGES = {
-    "main":   "https://i.postimg.cc/RFsmw06x/Chat-GPT-Image-4-iun-2026-g-06-12-26.png",
-    "buyer":  "https://i.postimg.cc/wTSw7dBP/Chat-GPT-Image-4-iun-2026-g-06-35-43.png",
-    "seller": "https://i.postimg.cc/TwFDCfFH/IMG-20260604-035610-329.png",
-    "ttk":    "https://i.postimg.cc/fT5gqd27/Chat-GPT-Image-4-iun-2026-g-03-57-21.png",
+    "main":    "https://i.postimg.cc/RFsmw06x/Chat-GPT-Image-4-iun-2026-g-06-12-26.png",
+    "buyer":   "https://i.postimg.cc/wTSw7dBP/Chat-GPT-Image-4-iun-2026-g-06-35-43.png",
+    "seller":  "https://i.postimg.cc/TwFDCfFH/IMG-20260604-035610-329.png",
+    "partner": "https://i.postimg.cc/fT5gqd27/Chat-GPT-Image-4-iun-2026-g-03-57-21.png",
 }
 
 SCREEN_NAMES = {
-    "main":         "🏠 Главный экран",
-    "buyer":        "🛒 Покупатель",
-    "buyer_detail": "📖 Покупатель (подробнее)",
-    "seller":       "🏪 Продавец",
-    "seller_detail":"📖 Продавец (подробнее)",
-    "ttk":          "💎 ТТК",
-    "ttk_crypto":   "❓ ТТК — Крипто?",
-    "ttk_benefit":  "💰 ТТК — Выгода",
-    "ttk_unique":   "⭐ ТТК — Уникальность",
-    "ttk_start":    "🚀 ТТК — Как начать",
-    "goto_platform":"🚀 Платформа",
+    "main":    "🏠 Главный экран",
+    "buyer":   "🛒 Покупатель",
+    "seller":  "🏪 Продавец",
+    "partner": "💎 Партнёр / ТТК",
 }
 
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
@@ -259,62 +252,29 @@ def is_admin(user_id: int) -> bool:
 
 def screen_main():
     text = (
-        "<b>Привет!</b>\n\n"
-        "Добро пожаловать в <b>KENTAVR MARKET</b>.\n\n"
-        "Это социальный маркетплейс нового поколения, объединяющий покупателей, "
-        "продавцов и партнёров в единую систему взаимной выгоды.\n\n"
-        "<blockquote>Основой модели является <b>Торговый Токен KENTAVR (ТТК)</b> — внутренний "
-        "цифровой инструмент, применяемый для бонусов, cashback и участия в развитии "
-        "сообщества.</blockquote>\n\n"
-        "Здесь каждый активный участник может использовать возможности торговой среды "
-        "не только для покупок или продаж, но и для участия в развитии общей системы.\n\n"
-        "<i>Что тебе сейчас ближе?</i>"
+        "👋 <b>Привет!</b>\n\n"
+        "Добро пожаловать в <b>KENTAVR MARKET</b> — социальный маркетплейс, где "
+        "покупатели, продавцы и партнёры работают в единой системе взаимной выгоды.\n\n"
+        "<i>Кем ты являешься?</i>"
     )
     keyboard = [
-        [InlineKeyboardButton("🛒 Я покупатель", callback_data="buyer")],
-        [InlineKeyboardButton("🏪 Я продавец", callback_data="seller")],
-        [InlineKeyboardButton("💎 Хочу узнать про ТТК", callback_data="ttk")],
+        [InlineKeyboardButton("🛒 Я покупатель",        callback_data="buyer")],
+        [InlineKeyboardButton("🏪 Я продавец",          callback_data="seller")],
+        [InlineKeyboardButton("💎 Хочу стать партнёром", callback_data="partner")],
         [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url="https://kentavrmarket.shop"))],
-        [InlineKeyboardButton("🚀 Перейти на платформу", callback_data="goto_platform")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
 
 
 def screen_buyer():
     text = (
-        "<b>🛒 Для покупателя</b>\n\n"
-        "На большинстве торговых площадок всё заканчивается покупкой.\n\n"
-        "В <b>KENTAVR MARKET</b> подход иной.\n\n"
-        "<blockquote>Совершая покупки внутри сообщества, ты становишься частью среды, где "
-        "активность участников формирует общий товарооборот.</blockquote>\n\n"
-        "Дополнительно могут начисляться бонусы в виде <b>Торгового Токена KENTAVR (ТТК)</b>, "
-        "применяемого для различных возможностей и расчётов внутри системы.\n\n"
-        "Привычная покупка превращается в элемент более широкой модели взаимодействия.\n\n"
-        "<i>Оценить идею проще всего изнутри.</i>"
+        "🛒 <b>Для покупателей</b>\n\n"
+        "Покупай у проверенных участников сообщества и получай <b>кэшбэк в ТТК</b> "
+        "за каждую покупку.\n\n"
+        "Чем активнее ты покупаешь — тем больше возможностей открывается."
     )
     keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
-        [InlineKeyboardButton("📖 Узнать подробнее", callback_data="buyer_detail")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
-
-
-def screen_buyer_detail():
-    text = (
-        "<b>📖 Подробнее</b>\n\n"
-        "<b>KENTAVR MARKET</b> позиционируется как первый социальный маркетплейс, "
-        "где равное внимание уделяется и покупателям, и продавцам.\n\n"
-        "<blockquote>Модель выстроена вокруг идеи взаимной выгоды и развития внутреннего "
-        "товарооборота.</blockquote>\n\n"
-        "Приобретая товары, услуги или интеллектуальные продукты у участников "
-        "сообщества, ты одновременно поддерживаешь деловую среду, частью которой "
-        "сам являешься.\n\n"
-        "<i>Посмотри, как это работает на практике.</i>"
-    )
-    keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="buyer")],
+        [InlineKeyboardButton("🚀 Перейти на платформу", url=PLATFORM_URL)],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -322,150 +282,38 @@ def screen_buyer_detail():
 
 def screen_seller():
     text = (
-        "<b>🏪 Для продавца</b>\n\n"
-        "Если ты предлагаешь товары, услуги или интеллектуальные продукты, "
-        "<b>KENTAVR MARKET</b> — это не просто торговая витрина.\n\n"
-        "<blockquote>Ты получаешь доступ к сообществу активных людей, заинтересованных в "
-        "развитии внутреннего оборота и долгосрочном сотрудничестве.</blockquote>\n\n"
-        "В отличие от классических площадок, акцент здесь делается не только на "
-        "продажах, но и на формировании устойчивых деловых связей между участниками.\n\n"
-        "<i>Следующий шаг — познакомиться с возможностями системы.</i>"
+        "🏪 <b>Для продавцов</b>\n\n"
+        "Размести товары, услуги или экспертизу и получи доступ к активной аудитории.\n\n"
+        "Здесь строят <b>долгосрочные отношения</b>, а не гонятся за разовыми сделками."
     )
     keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
-        [InlineKeyboardButton("📖 Узнать подробнее", callback_data="seller_detail")],
+        [InlineKeyboardButton("🚀 Перейти на платформу", url=PLATFORM_URL)],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
 
 
-def screen_seller_detail():
+def screen_partner():
     text = (
-        "<b>📖 Подробнее</b>\n\n"
-        "Ключевая идея <b>KENTAVR MARKET</b> — объединение покупателей и продавцов "
-        "внутри единой торговой среды.\n\n"
-        "<blockquote>Чем активнее развивается товарооборот, тем больше возможностей появляется "
-        "у участников: для продвижения предложений, расширения клиентской базы и "
-        "выстраивания партнёрских связей.</blockquote>\n\n"
-        "Модель ориентирована на формирование долгосрочных отношений, а не "
-        "разовых сделок.\n\n"
-        "<i>Посмотри, как это устроено изнутри.</i>"
+        "💎 <b>Партнёр / ТТК</b>\n\n"
+        "Участвуй в развитии платформы и получай <b>Торговый Токен KENTAVR (ТТК)</b>.\n\n"
+        "Его ценность растёт вместе с товарооборотом сообщества — "
+        "это не биржевая крипта, а реальная внутренняя экономика."
     )
     keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
-        [InlineKeyboardButton("⬅️ Назад", callback_data="seller")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
-
-
-def screen_ttk():
-    text = (
-        "<b>💎 Торговый Токен KENTAVR (ТТК)</b>\n\n"
-        "<b>ТТК</b> — это внутренний цифровой инструмент, действующий в рамках экосистемы "
-        "<b>KENTAVR MARKET</b>.\n\n"
-        "<blockquote>Применяется для начисления бонусов, cashback, частичной оплаты товаров "
-        "и услуг, а также как элемент участия в развитии сообщества.</blockquote>\n\n"
-        "<b>ТТК</b> — важная часть бизнес-модели платформы, связанная с внутренними "
-        "процессами торговой среды.\n\n"
-        "<i>Что тебя интересует?</i>"
-    )
-    keyboard = [
-        [InlineKeyboardButton("❓ Это криптовалюта?", callback_data="ttk_crypto")],
-        [InlineKeyboardButton("💰 В чём выгода?", callback_data="ttk_benefit")],
-        [InlineKeyboardButton("⭐ Почему это уникально?", callback_data="ttk_unique")],
-        [InlineKeyboardButton("🚀 Как начать?", callback_data="ttk_start")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
-
-
-def screen_ttk_crypto():
-    text = (
-        "<b>❓ Это криптовалюта?</b>\n\n"
-        "<b>ТТК</b> не является классической биржевой криптовалютой.\n\n"
-        "<blockquote>Это внутренний торговый токен, применяемый в системе <b>KENTAVR MARKET</b> "
-        "для бонусов, cashback и операций между участниками сообщества.</blockquote>\n\n"
-        "<i>Его ценность определяется активностью и товарооборотом внутри экосистемы, "
-        "а не биржевыми котировками.</i>"
-    )
-    keyboard = [
-        [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
-
-
-def screen_ttk_benefit():
-    text = (
-        "<b>💰 В чём выгода?</b>\n\n"
-        "Главная идея — объединение покупательской и предпринимательской активности "
-        "в единой среде.\n\n"
-        "<blockquote>Чем больше взаимодействий происходит внутри сообщества, тем активнее "
-        "развивается общий товарооборот и расширяются возможности для каждого "
-        "участника.</blockquote>\n\n"
-        "<i>ТТК служит связующим инструментом, который делает участие в системе "
-        "более предметным.</i>"
-    )
-    keyboard = [
-        [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
-
-
-def screen_ttk_unique():
-    text = (
-        "<b>⭐ Почему это уникально?</b>\n\n"
-        "<b>KENTAVR MARKET</b> сочетает возможности маркетплейса, делового сообщества "
-        "и токенизированной модели взаимодействия.\n\n"
-        "<blockquote>Такой подход формирует среду, где покупатели, продавцы и партнёры объединены "
-        "общей системой сотрудничества и внутреннего обмена ценностью.</blockquote>\n\n"
-        "<i>Это выходит за рамки привычного формата торговой площадки.</i>"
-    )
-    keyboard = [
-        [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
-
-
-def screen_ttk_start():
-    text = (
-        "<b>🚀 Как начать?</b>\n\n"
-        "<blockquote>Лучший способ разобраться в возможностях <b>KENTAVR MARKET</b> — "
-        "изучить систему изнутри.</blockquote>\n\n"
-        "<i>Перейди на платформу и выбери направление, которое интересно именно тебе: "
-        "покупки, продажи или партнёрство через ТТК.</i>"
-    )
-    keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на платформу", callback_data="goto_platform")],
-        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
-    ]
-    return text, InlineKeyboardMarkup(keyboard)
-
-
-def screen_platform():
-    text = (
-        "<b>Отлично!</b>\n\n"
-        "Сейчас откроется <b>KENTAVR MARKET</b>.\n\n"
-        "<blockquote>Познакомься с возможностями сообщества, изучи предложения участников "
-        "и выбери направление, которое подходит именно тебе.</blockquote>"
-    )
-    keyboard = [
-        [InlineKeyboardButton("🚀 Открыть KENTAVR MARKET", url=PLATFORM_URL)],
+        [InlineKeyboardButton("🚀 Перейти на платформу", url=PLATFORM_URL)],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
 
 
 SCREENS = {
-    "main": screen_main, "buyer": screen_buyer, "buyer_detail": screen_buyer_detail,
-    "seller": screen_seller, "seller_detail": screen_seller_detail, "ttk": screen_ttk,
-    "ttk_crypto": screen_ttk_crypto, "ttk_benefit": screen_ttk_benefit,
-    "ttk_unique": screen_ttk_unique, "ttk_start": screen_ttk_start, "goto_platform": screen_platform,
+    "main":    screen_main,
+    "buyer":   screen_buyer,
+    "seller":  screen_seller,
+    "partner": screen_partner,
 }
-STAT_MAP = {"buyer": "buyer_opens", "seller": "seller_opens", "ttk": "ttk_opens", "goto_platform": "platform_clicks"}
+STAT_MAP = {"buyer": "buyer_opens", "seller": "seller_opens", "partner": "ttk_opens"}
 
 
 # ── Render ─────────────────────────────────────────────────────────────────────
