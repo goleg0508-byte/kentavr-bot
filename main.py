@@ -261,6 +261,7 @@ def screen_main():
         [InlineKeyboardButton("🛒 Я покупатель",        callback_data="buyer")],
         [InlineKeyboardButton("🏪 Я продавец",          callback_data="seller")],
         [InlineKeyboardButton("💎 Хочу стать партнёром", callback_data="partner")],
+        [InlineKeyboardButton("🚀 Перейти на платформу", web_app=WebAppInfo(url="https://shop.kentavr.world/"))],
         [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url="https://kentavrmarket.shop"))],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -274,7 +275,7 @@ def screen_buyer():
         "Чем активнее ты покупаешь — тем больше возможностей открывается."
     )
     keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на платформу", url=PLATFORM_URL)],
+        [InlineKeyboardButton("🚀 Перейти на платформу", web_app=WebAppInfo(url="https://shop.kentavr.world/"))],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -287,7 +288,7 @@ def screen_seller():
         "Здесь строят <b>долгосрочные отношения</b>, а не гонятся за разовыми сделками."
     )
     keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на платформу", url=PLATFORM_URL)],
+        [InlineKeyboardButton("🚀 Перейти на платформу", web_app=WebAppInfo(url="https://shop.kentavr.world/"))],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
@@ -301,7 +302,7 @@ def screen_partner():
         "это не биржевая крипта, а реальная внутренняя экономика."
     )
     keyboard = [
-        [InlineKeyboardButton("🚀 Перейти на платформу", url=PLATFORM_URL)],
+        [InlineKeyboardButton("🚀 Перейти на платформу", web_app=WebAppInfo(url="https://shop.kentavr.world/"))],
         [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
     ]
     return text, InlineKeyboardMarkup(keyboard)
