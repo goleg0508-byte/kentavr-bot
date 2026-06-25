@@ -321,35 +321,53 @@ STAT_MAP = {"buyer": "buyer_opens", "seller": "seller_opens", "partner": "ttk_op
 
 async def render_screen(screen_key: str, update: Update, context: ContextTypes.DEFAULT_TYPE, is_new: bool = False):
     user_id = update.effective_user.id
-    await save_user_session(user_id, screen_key)
+    try:
+        await save_user_session(user_id, screen_key)
+    except Exception:
+        pass
 
     builder = SCREENS.get(screen_key, screen_main)
     default_text, markup = builder()
 
-    custom_text  = await get_custom_text(screen_key)
-    custom_image = await get_custom_image(screen_key)
+    try:
+        custom_text  = await get_custom_text(screen_key)
+        custom_image = await get_custom_image(screen_key)
+    except Exception:
+        custom_text = custom_image = None
+
     text      = custom_text  if custom_text  else default_text
     image_url = custom_image if custom_image else SCREEN_IMAGES.get(screen_key)
 
-    if screen_key in STAT_MAP:
-        await increment_stat(STAT_MAP[screen_key])
+    try:
+        if screen_key in STAT_MAP:
+            await increment_stat(STAT_MAP[screen_key])
+    except Exception:
+        pass
 
     if is_new:
         if image_url:
-            await update.message.reply_photo(photo=image_url, caption=text, reply_markup=markup, parse_mode="HTML")
-        else:
-            await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+            try:
+                await update.message.reply_photo(photo=image_url, caption=text, reply_markup=markup, parse_mode="HTML")
+                return
+            except Exception:
+                pass
+        await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
         return
 
     query = update.callback_query
+    chat = query.message.chat
     try:
         await query.message.delete()
     except Exception:
         pass
+
     if image_url:
-        await query.message.chat.send_photo(photo=image_url, caption=text, reply_markup=markup, parse_mode="HTML")
-    else:
-        await query.message.chat.send_message(text=text, reply_markup=markup, parse_mode="HTML")
+        try:
+            await chat.send_photo(photo=image_url, caption=text, reply_markup=markup, parse_mode="HTML")
+            return
+        except Exception:
+            pass
+    await chat.send_message(text=text, reply_markup=markup, parse_mode="HTML")
 
 
 # ── Admin helpers ──────────────────────────────────────────────────────────────
