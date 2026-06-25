@@ -288,16 +288,8 @@ SCREENS = {
 async def _send_screen(bot, chat_id: int, key: str):
     fn = SCREENS.get(key, _screen_main)
     default_text, markup = fn()
-    custom_txt, custom_img = await _get_ct(key)
-    text  = custom_txt or default_text
-    image = custom_img or SCREEN_IMAGES.get(key)
-    if image:
-        try:
-            await bot.send_photo(chat_id=chat_id, photo=image,
-                                 caption=text, reply_markup=markup, parse_mode="HTML")
-            return
-        except Exception as e:
-            logger.warning(f"send_photo({key}): {e}")
+    custom_txt, _ = await _get_ct(key)
+    text = custom_txt or default_text
     await bot.send_message(chat_id=chat_id, text=text,
                            reply_markup=markup, parse_mode="HTML")
 
