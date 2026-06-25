@@ -4,6 +4,7 @@ import asyncio
 import threading
 import csv
 import io
+import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 
@@ -30,6 +31,13 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
 DB_PATH = "kentavr.db"
+
+SCREEN_IMAGES = {
+    "main":    "https://i.postimg.cc/RFsmw06x/Chat-GPT-Image-4-iun-2026-g-06-12-26.png",
+    "buyer":   "https://i.postimg.cc/wTSw7dBP/Chat-GPT-Image-4-iun-2026-g-06-35-43.png",
+    "seller":  "https://i.postimg.cc/TwFDCfFH/IMG-20260604-035610-329.png",
+    "partner": "https://i.postimg.cc/fT5gqd27/Chat-GPT-Image-4-iun-2026-g-03-57-21.png",
+}
 
 SCREEN_NAMES = {
     "main":    "🏠 Главный экран",
@@ -304,10 +312,40 @@ SCREEN_TEXTS = {
 }
 
 
+async def _download(url: str) -> bytes | None:
+    try:
+        loop = asyncio.get_event_loop()
+        def _fetch():
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.read()
+        return await loop.run_in_executor(None, _fetch)
+    except Exception as e:
+        logger.warning(f"_download({url}): {e}")
+        return None
+
+
 async def _show(bot, chat_id: int, key: str):
-    custom_txt, _ = await _get_ct(key)
+    custom_txt, custom_img = await _get_ct(key)
     text   = custom_txt or SCREEN_TEXTS.get(key, SCREEN_TEXTS["main"])
     markup = _kb_main() if key == "main" else _kb_back()
+    image_url = custom_img or SCREEN_IMAGES.get(key)
+
+    if image_url:
+        img_bytes = await _download(image_url)
+        if img_bytes:
+            try:
+                await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=io.BytesIO(img_bytes),
+                    caption=text,
+                    reply_markup=markup,
+                    parse_mode="HTML",
+                )
+                return
+            except Exception as e:
+                logger.warning(f"send_photo({key}): {e}")
+
     await bot.send_message(
         chat_id=chat_id, text=text, reply_markup=markup, parse_mode="HTML")
 
