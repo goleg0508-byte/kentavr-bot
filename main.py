@@ -1,15 +1,24 @@
+"""
+KENTAVR MARKET — Telegram Bot
+Упрощённый: 3 экрана + платформа + КП. Без ConversationHandler.
+"""
 import os
+import io
+import csv
 import logging
 import asyncio
 import threading
-import csv
-import io
 import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    WebAppInfo,
+)
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -20,23 +29,53 @@ from telegram.ext import (
 )
 
 load_dotenv()
-
 logging.basicConfig(
-    format="%(asctime)s %(levelname)s %(message)s",
+    format="%(asctime)s [%(levelname)s] %(message)s",
     level=logging.INFO,
 )
-logger = logging.getLogger(__name__)
+log = logging.getLogger("kentavr")
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+# ── Конфигурация ────────────────────────────────────────────────────────────────
+BOT_TOKEN    = os.getenv("BOT_TOKEN", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
-ADMIN_IDS = [int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()]
+ADMIN_IDS    = [
+    int(x) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip().isdigit()
+]
 DB_PATH = "kentavr.db"
 
-SCREEN_IMAGES = {
+IMAGES = {
     "main":    "https://i.postimg.cc/RFsmw06x/Chat-GPT-Image-4-iun-2026-g-06-12-26.png",
     "buyer":   "https://i.postimg.cc/wTSw7dBP/Chat-GPT-Image-4-iun-2026-g-06-35-43.png",
     "seller":  "https://i.postimg.cc/TwFDCfFH/IMG-20260604-035610-329.png",
     "partner": "https://i.postimg.cc/fT5gqd27/Chat-GPT-Image-4-iun-2026-g-03-57-21.png",
+}
+
+TEXTS = {
+    "main": (
+        "👋 <b>Привет!</b>\n\n"
+        "Добро пожаловать в <b>KENTAVR MARKET</b> — социальный маркетплейс, "
+        "где покупатели, продавцы и партнёры работают в единой системе.\n\n"
+        "<i>Кем ты являешься?</i>"
+    ),
+    "buyer": (
+        "🛒 <b>Для покупателей</b>\n\n"
+        "Покупай у проверенных участников и получай "
+        "<b>кэшбэк в ТТК</b> за каждую покупку.\n\n"
+        "Чем активнее — тем больше возможностей."
+    ),
+    "seller": (
+        "🏪 <b>Для продавцов</b>\n\n"
+        "Размести товары, услуги или экспертизу и получи "
+        "доступ к активной аудитории.\n\n"
+        "Долгосрочные отношения, не разовые сделки."
+    ),
+    "partner": (
+        "💎 <b>Партнёр / ТТК</b>\n\n"
+        "Участвуй в развитии платформы и получай "
+        "<b>Торговый Токен KENTAVR (ТТК)</b>.\n\n"
+        "Реальная внутренняя экономика — ценность растёт "
+        "вместе с товарооборотом."
+    ),
 }
 
 SCREEN_NAMES = {
@@ -46,109 +85,110 @@ SCREEN_NAMES = {
     "partner": "💎 Партнёр / ТТК",
 }
 
-db_pool = None
-USE_POSTGRES = False
-_img_cache: dict[str, bytes] = {}  # url → bytes, заполняется при старте
+# Кэш картинок: url → bytes, заполняется при старте
+_cache: dict = {}
+
+# ── Глобальное состояние БД ─────────────────────────────────────────────────────
+_pool       = None
+_use_pg     = False
 
 
-# ── Health ──────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# Health-check сервер (Railway требует открытый PORT)
+# ═══════════════════════════════════════════════════════════════════════════════
 
-class _H(BaseHTTPRequestHandler):
+class _Health(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
-    def log_message(self, *a): pass
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, *_): pass
 
-def _start_health():
+def _run_health():
     port = int(os.getenv("PORT", "8080"))
-    try:
-        HTTPServer(("0.0.0.0", port), _H).serve_forever()
-    except Exception as e:
-        logger.warning(f"Health server error: {e}")
+    HTTPServer(("0.0.0.0", port), _Health).serve_forever()
 
 
-# ── Database ────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# База данных
+# ═══════════════════════════════════════════════════════════════════════════════
 
-async def init_db():
-    global db_pool, USE_POSTGRES
+async def db_init():
+    global _pool, _use_pg
     if DATABASE_URL:
         try:
             import asyncpg
-            db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
-            async with db_pool.acquire() as c:
+            _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+            async with _pool.acquire() as c:
                 await c.execute("""
                     CREATE TABLE IF NOT EXISTS stats (
-                        key TEXT PRIMARY KEY, value BIGINT DEFAULT 0)""")
+                        key TEXT PRIMARY KEY, val BIGINT DEFAULT 0)""")
                 await c.execute("""
                     CREATE TABLE IF NOT EXISTS users (
                         uid BIGINT PRIMARY KEY,
-                        first_seen TIMESTAMP DEFAULT NOW(),
-                        last_seen  TIMESTAMP DEFAULT NOW(),
-                        cnt        INT DEFAULT 0)""")
+                        first_seen TIMESTAMPTZ DEFAULT NOW(),
+                        last_seen  TIMESTAMPTZ DEFAULT NOW(),
+                        cnt INT DEFAULT 0)""")
                 await c.execute("""
-                    CREATE TABLE IF NOT EXISTS screen_content (
+                    CREATE TABLE IF NOT EXISTS content (
                         sk TEXT PRIMARY KEY, txt TEXT, img TEXT)""")
                 for k in ("starts", "buyer", "seller", "partner"):
                     await c.execute(
-                        "INSERT INTO stats(key,value) VALUES($1,0) ON CONFLICT DO NOTHING", k)
-            USE_POSTGRES = True
-            logger.info("DB: PostgreSQL connected")
+                        "INSERT INTO stats(key,val) VALUES($1,0) ON CONFLICT DO NOTHING", k)
+            _use_pg = True
+            log.info("DB → PostgreSQL OK")
             return
         except Exception as e:
-            logger.warning(f"DB: PostgreSQL failed ({e}), fallback to SQLite")
-            db_pool = None
+            log.warning(f"DB → PostgreSQL failed: {e}")
+            _pool = None
 
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, val INTEGER DEFAULT 0)")
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS users "
+            "(uid INTEGER PRIMARY KEY, first_seen TEXT, last_seen TEXT, cnt INTEGER DEFAULT 0)")
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS content "
+            "(sk TEXT PRIMARY KEY, txt TEXT, img TEXT)")
+        for k in ("starts", "buyer", "seller", "partner"):
+            await db.execute(
+                "INSERT OR IGNORE INTO stats(key,val) VALUES(?,0)", (k,))
+        await db.commit()
+    log.info("DB → SQLite OK")
+
+
+async def db_inc(key: str):
     try:
-        import aiosqlite
-        async with aiosqlite.connect(DB_PATH) as db:
-            await db.execute(
-                "CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER DEFAULT 0)")
-            await db.execute(
-                "CREATE TABLE IF NOT EXISTS users "
-                "(uid INTEGER PRIMARY KEY, first_seen TEXT, last_seen TEXT, cnt INTEGER DEFAULT 0)")
-            await db.execute(
-                "CREATE TABLE IF NOT EXISTS screen_content "
-                "(sk TEXT PRIMARY KEY, txt TEXT, img TEXT)")
-            for k in ("starts", "buyer", "seller", "partner"):
-                await db.execute(
-                    "INSERT OR IGNORE INTO stats(key,value) VALUES(?,0)", (k,))
-            await db.commit()
-        logger.info("DB: SQLite ready")
-    except Exception as e:
-        logger.warning(f"DB: SQLite failed ({e}), running without DB")
-
-
-async def _inc(key: str):
-    try:
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
+        if _use_pg and _pool:
+            async with _pool.acquire() as c:
                 await c.execute(
-                    "INSERT INTO stats(key,value) VALUES($1,1) "
-                    "ON CONFLICT(key) DO UPDATE SET value=stats.value+1", key)
+                    "INSERT INTO stats(key,val) VALUES($1,1) "
+                    "ON CONFLICT(key) DO UPDATE SET val=stats.val+1", key)
         else:
             import aiosqlite
             async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "INSERT OR IGNORE INTO stats(key,value) VALUES(?,0)", (key,))
-                await db.execute(
-                    "UPDATE stats SET value=value+1 WHERE key=?", (key,))
+                await db.execute("INSERT OR IGNORE INTO stats(key,val) VALUES(?,0)", (key,))
+                await db.execute("UPDATE stats SET val=val+1 WHERE key=?", (key,))
                 await db.commit()
     except Exception as e:
-        logger.warning(f"_inc({key}): {e}")
+        log.warning(f"db_inc({key}): {e}")
 
 
-async def _touch(uid: int):
+async def db_touch(uid: int):
     try:
         now = datetime.utcnow().isoformat()
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
+        if _use_pg and _pool:
+            async with _pool.acquire() as c:
                 await c.execute(
-                    "INSERT INTO users(uid,first_seen,last_seen,cnt) VALUES($1,NOW(),NOW(),1) "
+                    "INSERT INTO users(uid) VALUES($1) "
                     "ON CONFLICT(uid) DO UPDATE SET last_seen=NOW(), cnt=users.cnt+1", uid)
         else:
             import aiosqlite
             async with aiosqlite.connect(DB_PATH) as db:
-                r = await (await db.execute(
-                    "SELECT uid FROM users WHERE uid=?", (uid,))).fetchone()
+                r = (await (await db.execute(
+                    "SELECT uid FROM users WHERE uid=?", (uid,))).fetchone())
                 if r:
                     await db.execute(
                         "UPDATE users SET last_seen=?,cnt=cnt+1 WHERE uid=?", (now, uid))
@@ -158,15 +198,15 @@ async def _touch(uid: int):
                         (uid, now, now))
                 await db.commit()
     except Exception as e:
-        logger.warning(f"_touch: {e}")
+        log.warning(f"db_touch: {e}")
 
 
-async def _stats() -> dict:
+async def db_stats() -> dict:
     try:
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
-                rows = await c.fetch("SELECT key,value FROM stats")
-                s = {r["key"]: r["value"] for r in rows}
+        if _use_pg and _pool:
+            async with _pool.acquire() as c:
+                rows = await c.fetch("SELECT key,val FROM stats")
+                s = {r["key"]: r["val"] for r in rows}
                 s["users"]   = await c.fetchval("SELECT COUNT(*) FROM users") or 0
                 s["today"]   = await c.fetchval(
                     "SELECT COUNT(*) FROM users WHERE last_seen::date=CURRENT_DATE") or 0
@@ -174,11 +214,11 @@ async def _stats() -> dict:
         else:
             import aiosqlite
             async with aiosqlite.connect(DB_PATH) as db:
-                rows = await (await db.execute("SELECT key,value FROM stats")).fetchall()
+                rows = await (await db.execute("SELECT key,val FROM stats")).fetchall()
                 s = {r[0]: r[1] for r in rows}
-                s["users"]   = (await (
+                s["users"]  = (await (
                     await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0] or 0
-                s["today"]   = (await (
+                s["today"]  = (await (
                     await db.execute(
                         "SELECT COUNT(*) FROM users WHERE date(last_seen)=date('now')"
                     )).fetchone())[0] or 0
@@ -186,14 +226,14 @@ async def _stats() -> dict:
                 s["actions"] = r[0] if r and r[0] else 0
         return s
     except Exception as e:
-        logger.warning(f"_stats: {e}")
+        log.warning(f"db_stats: {e}")
         return {}
 
 
-async def _all_uids() -> list:
+async def db_uids() -> list:
     try:
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
+        if _use_pg and _pool:
+            async with _pool.acquire() as c:
                 return [r["uid"] for r in await c.fetch("SELECT uid FROM users")]
         import aiosqlite
         async with aiosqlite.connect(DB_PATH) as db:
@@ -203,156 +243,142 @@ async def _all_uids() -> list:
         return []
 
 
-async def _get_ct(sk: str):
+async def db_get(sk: str):
     try:
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
-                r = await c.fetchrow(
-                    "SELECT txt,img FROM screen_content WHERE sk=$1", sk)
+        if _use_pg and _pool:
+            async with _pool.acquire() as c:
+                r = await c.fetchrow("SELECT txt,img FROM content WHERE sk=$1", sk)
                 return (r["txt"], r["img"]) if r else (None, None)
         import aiosqlite
         async with aiosqlite.connect(DB_PATH) as db:
             r = await (await db.execute(
-                "SELECT txt,img FROM screen_content WHERE sk=?", (sk,))).fetchone()
+                "SELECT txt,img FROM content WHERE sk=?", (sk,))).fetchone()
             return (r[0], r[1]) if r else (None, None)
     except Exception:
         return (None, None)
 
 
-async def _set_ct(sk: str, txt=None, img=None):
+async def db_set(sk: str, txt=None, img=None):
     try:
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
+        if _use_pg and _pool:
+            async with _pool.acquire() as c:
                 if txt is not None:
                     await c.execute(
-                        "INSERT INTO screen_content(sk,txt) VALUES($1,$2) "
+                        "INSERT INTO content(sk,txt) VALUES($1,$2) "
                         "ON CONFLICT(sk) DO UPDATE SET txt=$2", sk, txt)
                 if img is not None:
                     await c.execute(
-                        "INSERT INTO screen_content(sk,img) VALUES($1,$2) "
+                        "INSERT INTO content(sk,img) VALUES($1,$2) "
                         "ON CONFLICT(sk) DO UPDATE SET img=$2", sk, img)
         else:
             import aiosqlite
             async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    "INSERT OR IGNORE INTO screen_content(sk) VALUES(?)", (sk,))
+                await db.execute("INSERT OR IGNORE INTO content(sk) VALUES(?)", (sk,))
                 if txt is not None:
-                    await db.execute(
-                        "UPDATE screen_content SET txt=? WHERE sk=?", (txt, sk))
+                    await db.execute("UPDATE content SET txt=? WHERE sk=?", (txt, sk))
                 if img is not None:
-                    await db.execute(
-                        "UPDATE screen_content SET img=? WHERE sk=?", (img, sk))
+                    await db.execute("UPDATE content SET img=? WHERE sk=?", (img, sk))
                 await db.commit()
     except Exception as e:
-        logger.warning(f"_set_ct: {e}")
+        log.warning(f"db_set: {e}")
 
 
-async def _reset_ct(sk: str, col: str):
+async def db_reset(sk: str, col: str):
     try:
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
-                await c.execute(
-                    f"UPDATE screen_content SET {col}=NULL WHERE sk=$1", sk)
+        if _use_pg and _pool:
+            async with _pool.acquire() as c:
+                await c.execute(f"UPDATE content SET {col}=NULL WHERE sk=$1", sk)
         else:
             import aiosqlite
             async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(
-                    f"UPDATE screen_content SET {col}=NULL WHERE sk=?", (sk,))
+                await db.execute(f"UPDATE content SET {col}=NULL WHERE sk=?", (sk,))
                 await db.commit()
     except Exception as e:
-        logger.warning(f"_reset_ct: {e}")
+        log.warning(f"db_reset: {e}")
 
 
-def _is_admin(uid: int) -> bool:
-    return uid in ADMIN_IDS
+# ═══════════════════════════════════════════════════════════════════════════════
+# Картинки
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _fetch_url(url: str):
+    req = urllib.request.Request(url, headers={"User-Agent": "TelegramBot/1.0"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return r.read()
 
 
-# ── Screens ─────────────────────────────────────────────────────────────────
+async def img_preload():
+    log.info("Загрузка картинок...")
+    for key, url in IMAGES.items():
+        try:
+            data = await asyncio.to_thread(_fetch_url, url)
+            _cache[url] = data
+            log.info(f"  ✓ {key} ({len(data)//1024} KB)")
+        except Exception as e:
+            log.warning(f"  ✗ {key}: {e}")
+    log.info(f"Картинки: {len(_cache)}/{len(IMAGES)} загружено")
 
-def _kb_main():
+
+async def img_get(url: str):
+    if url in _cache:
+        return _cache[url]
+    try:
+        data = await asyncio.to_thread(_fetch_url, url)
+        _cache[url] = data
+        return data
+    except Exception as e:
+        log.warning(f"img_get failed: {e}")
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Клавиатуры
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def kb_main():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 Я покупатель",          callback_data="go:buyer")],
-        [InlineKeyboardButton("🏪 Я продавец",            callback_data="go:seller")],
-        [InlineKeyboardButton("💎 Хочу стать партнёром",  callback_data="go:partner")],
-        [InlineKeyboardButton("🚀 Перейти на платформу",  url="https://shop.kentavr.world/")],
-        [InlineKeyboardButton("📄 Коммерческое предложение",
-                              web_app=WebAppInfo(url="https://kentavrmarket.shop"))],
+        [InlineKeyboardButton("🛒 Я покупатель",         callback_data="go:buyer")],
+        [InlineKeyboardButton("🏪 Я продавец",           callback_data="go:seller")],
+        [InlineKeyboardButton("💎 Хочу стать партнёром", callback_data="go:partner")],
+        [InlineKeyboardButton("🚀 Перейти на платформу", url="https://shop.kentavr.world/")],
+        [InlineKeyboardButton(
+            "📄 Коммерческое предложение",
+            web_app=WebAppInfo(url="https://kentavrmarket.shop"),
+        )],
     ])
 
-def _kb_back():
+
+def kb_screen():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🚀 Перейти на платформу", url="https://shop.kentavr.world/")],
         [InlineKeyboardButton("🏠 На главную",           callback_data="go:main")],
     ])
 
-SCREEN_TEXTS = {
-    "main": (
-        "👋 <b>Привет!</b>\n\n"
-        "Добро пожаловать в <b>KENTAVR MARKET</b> — социальный маркетплейс.\n\n"
-        "Полная информация о платформе — в разделе «Коммерческое предложение».\n\n"
-        "<i>Кем ты являешься?</i>"
-    ),
-    "buyer": (
-        "🛒 <b>Для покупателей</b>\n\n"
-        "Покупай у проверенных участников сообщества и получай "
-        "<b>кэшбэк в ТТК</b> за каждую покупку.\n\n"
-        "Чем активнее — тем больше возможностей открывается."
-    ),
-    "seller": (
-        "🏪 <b>Для продавцов</b>\n\n"
-        "Размести товары, услуги или экспертизу и получи доступ "
-        "к активной аудитории.\n\n"
-        "Здесь строят <b>долгосрочные отношения</b>, а не разовые сделки."
-    ),
-    "partner": (
-        "💎 <b>Партнёр / ТТК</b>\n\n"
-        "Участвуй в развитии платформы и получай "
-        "<b>Торговый Токен KENTAVR (ТТК)</b>.\n\n"
-        "Реальная внутренняя экономика, не биржевая крипта."
-    ),
-}
+
+def kb_admin():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Статистика",      callback_data="adm:stats"),
+         InlineKeyboardButton("👥 Пользователи",    callback_data="adm:users")],
+        [InlineKeyboardButton("📢 Рассылка",        callback_data="adm:broadcast"),
+         InlineKeyboardButton("📥 Экспорт",         callback_data="adm:export")],
+        [InlineKeyboardButton("✏️ Тексты",          callback_data="adm:texts")],
+        [InlineKeyboardButton("🏠 На главную",       callback_data="go:main")],
+    ])
 
 
-async def _download(url: str):
-    try:
-        loop = asyncio.get_running_loop()
-        def _fetch():
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=15) as r:
-                return r.read()
-        data = await loop.run_in_executor(None, _fetch)
-        logger.info(f"_download OK: {len(data)} bytes from {url[:60]}")
-        return data
-    except Exception as e:
-        logger.warning(f"_download FAILED: {e} — url={url[:60]}")
-        return None
+# ═══════════════════════════════════════════════════════════════════════════════
+# Отправка экранов
+# ═══════════════════════════════════════════════════════════════════════════════
 
-
-async def _preload_images():
-    logger.info("Preloading images...")
-    for key, url in SCREEN_IMAGES.items():
-        data = await _download(url)
-        if data:
-            _img_cache[url] = data
-            logger.info(f"  cached [{key}] {len(data)} bytes")
-        else:
-            logger.warning(f"  FAILED [{key}]")
-    logger.info(f"Preload done. Cached: {len(_img_cache)}/{len(SCREEN_IMAGES)}")
-
-
-async def _show(bot, chat_id: int, key: str):
-    custom_txt, custom_img = await _get_ct(key)
-    text      = custom_txt or SCREEN_TEXTS.get(key, SCREEN_TEXTS["main"])
-    markup    = _kb_main() if key == "main" else _kb_back()
-    image_url = custom_img or SCREEN_IMAGES.get(key)
-
-    logger.info(f"_show key={key} chat={chat_id} image={'yes' if image_url else 'no'}")
+async def show_screen(bot, chat_id: int, key: str):
+    custom_txt, custom_img = await db_get(key)
+    text      = custom_txt or TEXTS.get(key, TEXTS["main"])
+    markup    = kb_main() if key == "main" else kb_screen()
+    image_url = custom_img or IMAGES.get(key)
 
     if image_url:
-        img_bytes = _img_cache.get(image_url) or await _download(image_url)
+        img_bytes = await img_get(image_url)
         if img_bytes:
-            if image_url not in _img_cache:
-                _img_cache[image_url] = img_bytes
             try:
                 await bot.send_photo(
                     chat_id=chat_id,
@@ -361,112 +387,96 @@ async def _show(bot, chat_id: int, key: str):
                     reply_markup=markup,
                     parse_mode="HTML",
                 )
-                logger.info(f"_show send_photo OK key={key}")
                 return
             except Exception as e:
-                logger.warning(f"_show send_photo FAILED key={key}: {e}")
+                log.warning(f"send_photo({key}): {e}")
 
-    try:
-        await bot.send_message(
-            chat_id=chat_id, text=text, reply_markup=markup, parse_mode="HTML")
-        logger.info(f"_show send_message OK key={key}")
-    except Exception as e:
-        logger.error(f"_show send_message FAILED key={key}: {e}")
+    await bot.send_message(
+        chat_id=chat_id, text=text, reply_markup=markup, parse_mode="HTML")
 
 
-# ── Admin ────────────────────────────────────────────────────────────────────
-
-async def _admin_panel(bot, chat_id: int, mid: int = None):
-    s = await _stats()
+async def show_admin(bot, chat_id: int, mid: int = None):
+    s    = await db_stats()
     text = (
         "🎛 <b>ПАНЕЛЬ АДМИНИСТРАТОРА</b>\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"👥 Пользователей: <b>{s.get('users', 0)}</b>   "
         f"📅 Сегодня: <b>{s.get('today', 0)}</b>\n"
-        f"🎯 Всего действий: <b>{s.get('actions', 0)}</b>\n\n"
+        f"🎯 Действий всего: <b>{s.get('actions', 0)}</b>\n\n"
         "<i>Выбери действие:</i>"
     )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Статистика",       callback_data="adm:stats"),
-         InlineKeyboardButton("👥 Пользователи",     callback_data="adm:users")],
-        [InlineKeyboardButton("📢 Рассылка",         callback_data="adm:broadcast"),
-         InlineKeyboardButton("📥 Экспорт CSV",      callback_data="adm:export")],
-        [InlineKeyboardButton("✏️ Тексты экранов",   callback_data="adm:texts")],
-        [InlineKeyboardButton("🏠 На главную",        callback_data="go:main")],
-    ])
     if mid:
         try:
             await bot.edit_message_text(
                 chat_id=chat_id, message_id=mid,
-                text=text, reply_markup=kb, parse_mode="HTML")
+                text=text, reply_markup=kb_admin(), parse_mode="HTML")
             return
         except Exception:
             pass
-    await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, parse_mode="HTML")
+    await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb_admin(), parse_mode="HTML")
 
 
-# ── Handlers ─────────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# Хэндлеры
+# ═══════════════════════════════════════════════════════════════════════════════
 
-async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def h_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    logger.info(f"[/start] uid={uid}")
-    context.user_data.clear()
-    await asyncio.gather(_inc("starts"), _touch(uid))
-    await _show(context.bot, update.effective_chat.id, "main")
+    log.info(f"/start uid={uid}")
+    ctx.user_data.clear()
+    await asyncio.gather(db_inc("starts"), db_touch(uid))
+    await show_screen(ctx.bot, update.effective_chat.id, "main")
 
 
-async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def h_admin(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
-    if not _is_admin(uid):
+    if uid not in ADMIN_IDS:
         await update.message.reply_text("⛔ Доступ запрещён.")
         return
-    context.user_data.clear()
-    await _admin_panel(context.bot, update.effective_chat.id)
+    ctx.user_data.clear()
+    await show_admin(ctx.bot, update.effective_chat.id)
 
 
-async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
+async def h_cancel(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data.clear()
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В панель", callback_data="adm:panel")]])
     await update.message.reply_text("❌ Отменено.", reply_markup=kb)
 
 
-async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def h_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q    = update.callback_query
     uid  = update.effective_user.id
     cid  = update.effective_chat.id
     mid  = q.message.message_id
     data = q.data
-    bot  = context.bot
+    bot  = ctx.bot
 
-    logger.info(f"[cb] uid={uid} data={data!r}")
-    try:
-        await q.answer()
-    except Exception as e:
-        logger.warning(f"[cb] q.answer() failed: {e}")
+    log.info(f"[CB] uid={uid} data={data!r}")
 
-    # ── Навигация по экранам ─────────────────────────────────────────────────
+    # Сразу отвечаем Telegram чтобы убрать "часики" с кнопки
+    await q.answer()
+
+    # ── Навигация (доступна всем) ────────────────────────────────────────────
     if data.startswith("go:"):
         key = data[3:]
-        logger.info(f"[cb] → screen '{key}'")
-        context.user_data.clear()
+        ctx.user_data.clear()
         if key in ("buyer", "seller", "partner"):
-            await _inc(key)
+            await db_inc(key)
+        # Удаляем старое сообщение
         try:
             await bot.delete_message(chat_id=cid, message_id=mid)
-        except Exception as e:
-            logger.info(f"[cb] delete_message skipped: {e}")
-        try:
-            await _show(bot, cid, key)
-        except Exception as e:
-            logger.error(f"[cb] _show FAILED key={key}: {e}", exc_info=True)
+        except Exception:
+            pass
+        # Показываем новый экран
+        await show_screen(bot, cid, key)
         return
 
     # ── Только для админов ───────────────────────────────────────────────────
-    if not _is_admin(uid):
-        logger.info(f"[cb] non-admin uid={uid} tried {data!r}")
+    if uid not in ADMIN_IDS:
         return
 
-    async def _edit(text: str, kb: InlineKeyboardMarkup):
+    # Вспомогательная функция для edit-or-send
+    async def edit(text: str, kb: InlineKeyboardMarkup):
         try:
             await bot.edit_message_text(
                 chat_id=cid, message_id=mid,
@@ -478,39 +488,40 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     back = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="adm:panel")]])
 
     if data == "adm:panel":
-        context.user_data.clear()
-        await _admin_panel(bot, cid, mid)
+        ctx.user_data.clear()
+        await show_admin(bot, cid, mid)
 
     elif data == "adm:stats":
-        s = await _stats()
+        s = await db_stats()
         t = (
-            "📊 <b>СТАТИСТИКА</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👥 Пользователей: <code>{s.get('users', 0)}</code>\n"
-            f"📅 Активных сегодня: <code>{s.get('today', 0)}</code>\n"
-            f"🎯 Всего действий: <code>{s.get('actions', 0)}</code>\n\n"
-            f"▶️ /start: <code>{s.get('starts', 0)}</code>\n"
-            f"🛒 Покупатель: <code>{s.get('buyer', 0)}</code>\n"
-            f"🏪 Продавец: <code>{s.get('seller', 0)}</code>\n"
-            f"💎 Партнёр: <code>{s.get('partner', 0)}</code>"
+            "📊 <b>СТАТИСТИКА</b>\n━━━━━━━━━━━━━━━━\n\n"
+            f"👥 Пользователей: <code>{s.get('users',0)}</code>\n"
+            f"📅 Активных сегодня: <code>{s.get('today',0)}</code>\n"
+            f"🎯 Действий: <code>{s.get('actions',0)}</code>\n\n"
+            f"▶️ /start: <code>{s.get('starts',0)}</code>\n"
+            f"🛒 Покупатель: <code>{s.get('buyer',0)}</code>\n"
+            f"🏪 Продавец: <code>{s.get('seller',0)}</code>\n"
+            f"💎 Партнёр: <code>{s.get('partner',0)}</code>"
         )
-        await _edit(t, back)
+        await edit(t, back)
 
     elif data == "adm:users":
-        uids = await _all_uids()
+        uids = await db_uids()
         t = f"👥 <b>Пользователи</b> — всего: <code>{len(uids)}</code>\n\n"
         for i, u in enumerate(uids[-20:][::-1], 1):
             t += f"{i}. <code>{u}</code>\n"
-        await _edit(t, back)
+        await edit(t, back)
 
     elif data == "adm:export":
-        uids = await _all_uids()
-        s    = await _stats()
+        uids = await db_uids()
+        s    = await db_stats()
         buf  = io.StringIO()
         w    = csv.writer(buf)
         w.writerow(["Метрика", "Значение"])
-        for k, lbl in [("users","Пользователей"),("today","Сегодня"),
-                        ("actions","Действий"),("starts","/start"),
-                        ("buyer","Покупатель"),("seller","Продавец"),("partner","Партнёр")]:
+        for k, lbl in [
+            ("users","Пользователей"), ("today","Сегодня"), ("actions","Действий"),
+            ("starts","/start"), ("buyer","Покупатель"), ("seller","Продавец"), ("partner","Партнёр"),
+        ]:
             w.writerow([lbl, s.get(k, 0)])
         w.writerow([]); w.writerow(["user_id"])
         for u in uids: w.writerow([u])
@@ -519,78 +530,78 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             chat_id=cid,
             document=io.BytesIO(buf.getvalue().encode()),
             filename=f"kentavr_{datetime.now():%Y%m%d_%H%M}.csv",
-            caption="📊 Экспорт KENTAVR MARKET")
+            caption="📊 Экспорт")
 
     elif data == "adm:broadcast":
-        uids = await _all_uids()
-        context.user_data["state"] = "broadcast"
-        t = (f"📢 <b>Рассылка</b>\n\n"
-             f"Аудитория: <b>{len(uids)} чел.</b>\n\n"
-             "Отправь текст сообщения. /cancel — отмена.")
+        uids = await db_uids()
+        ctx.user_data["state"] = "broadcast"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="adm:panel")]])
-        await _edit(t, kb)
+        await edit(
+            f"📢 <b>Рассылка</b>\n\nАудитория: <b>{len(uids)} чел.</b>\n\n"
+            "Отправь текст сообщения. /cancel — отмена.", kb)
 
     elif data == "adm:texts":
-        context.user_data["state"] = "texts_menu"
-        rows = [[InlineKeyboardButton(name, callback_data=f"adm:pick_t:{k}")]
+        ctx.user_data["state"] = "texts_menu"
+        rows = [[InlineKeyboardButton(name, callback_data=f"adm:t:{k}")]
                 for k, name in SCREEN_NAMES.items()]
         rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="adm:panel")])
-        await _edit("✏️ <b>Тексты</b>\n\nВыбери экран:", InlineKeyboardMarkup(rows))
+        await edit("✏️ <b>Тексты экранов</b>\n\nВыбери экран:", InlineKeyboardMarkup(rows))
 
-    elif data.startswith("adm:pick_t:"):
-        sk = data[len("adm:pick_t:"):]
-        context.user_data.update({"state": "edit_text", "sk": sk})
-        ct, _ = await _get_ct(sk)
-        cur   = ct or SCREEN_TEXTS.get(sk, "")
-        prev  = cur[:400] + ("…" if len(cur) > 400 else "")
+    elif data.startswith("adm:t:"):
+        sk = data[6:]
+        ctx.user_data.update({"state": "edit_text", "sk": sk})
+        ct, _ = await db_get(sk)
+        cur   = ct or TEXTS.get(sk, "")
+        prev  = cur[:500] + ("…" if len(cur) > 500 else "")
         lbl   = "изменён" if ct else "оригинал"
-        t = (f"✏️ <b>{SCREEN_NAMES.get(sk, sk)}</b> ({lbl})\n\n"
-             f"<b>Текущий текст:</b>\n<blockquote>{prev}</blockquote>\n\n"
-             "Отправь новый текст. /cancel — отмена.")
-        rows = []
+        rows  = []
         if ct:
-            rows.append([InlineKeyboardButton("🔄 Сбросить", callback_data=f"adm:rst_t:{sk}")])
+            rows.append([InlineKeyboardButton("🔄 Сбросить", callback_data=f"adm:rt:{sk}")])
         rows.append([InlineKeyboardButton("⬅️ К списку", callback_data="adm:texts")])
-        await _edit(t, InlineKeyboardMarkup(rows))
+        await edit(
+            f"✏️ <b>{SCREEN_NAMES.get(sk, sk)}</b> ({lbl})\n\n"
+            f"<b>Текущий текст:</b>\n<blockquote>{prev}</blockquote>\n\n"
+            "Отправь новый текст. /cancel — отмена.",
+            InlineKeyboardMarkup(rows))
 
-    elif data.startswith("adm:rst_t:"):
-        sk = data[len("adm:rst_t:"):]
-        await _reset_ct(sk, "txt")
-        context.user_data.clear()
-        await _edit(f"🔄 Текст <b>{SCREEN_NAMES.get(sk, sk)}</b> сброшен.", back)
+    elif data.startswith("adm:rt:"):
+        sk = data[7:]
+        await db_reset(sk, "txt")
+        ctx.user_data.clear()
+        await edit(f"🔄 Текст «{SCREEN_NAMES.get(sk, sk)}» сброшен.", back)
 
 
-async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def h_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     uid   = update.effective_user.id
     text  = update.message.text or ""
-    state = context.user_data.get("state")
+    state = ctx.user_data.get("state")
 
-    if not _is_admin(uid) or not state:
+    if uid not in ADMIN_IDS or not state:
         return
 
-    sk = context.user_data.get("sk")
+    sk   = ctx.user_data.get("sk")
     back = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В панель", callback_data="adm:panel")]])
 
     if state == "broadcast":
-        uids  = await _all_uids()
-        sent  = failed = 0
-        msg   = await update.message.reply_text(f"⏳ Отправляю {len(uids)} пользователям…")
+        uids = await db_uids()
+        msg  = await update.message.reply_text(f"⏳ Отправляю {len(uids)} пользователям…")
+        sent = failed = 0
         for i, u in enumerate(uids):
             try:
-                await context.bot.send_message(u, text, parse_mode="HTML")
+                await ctx.bot.send_message(u, text, parse_mode="HTML")
                 sent += 1
             except Exception:
                 failed += 1
             if (i + 1) % 30 == 0:
                 await asyncio.sleep(1)
-        context.user_data.clear()
+        ctx.user_data.clear()
         await msg.edit_text(
-            f"✅ Доставлено: <b>{sent}</b>\n❌ Ошибок: <b>{failed}</b>",
+            f"✅ Доставлено: <b>{sent}</b>  ❌ Ошибок: <b>{failed}</b>",
             reply_markup=back, parse_mode="HTML")
 
     elif state == "edit_text" and sk:
-        await _set_ct(sk, txt=text)
-        context.user_data.clear()
+        await db_set(sk, txt=text)
+        ctx.user_data.clear()
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("✏️ Изменить ещё", callback_data="adm:texts")],
             [InlineKeyboardButton("⬅️ В панель",     callback_data="adm:panel")],
@@ -600,46 +611,51 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=kb, parse_mode="HTML")
 
 
-async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Unhandled error: {context.error}", exc_info=context.error)
+async def h_error(update: object, ctx: ContextTypes.DEFAULT_TYPE):
+    log.error(f"Ошибка: {ctx.error}", exc_info=ctx.error)
 
 
-# ── Entry point ──────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+# Старт
+# ═══════════════════════════════════════════════════════════════════════════════
 
-async def _post_init(app: Application):
+async def on_init(app: Application):
     try:
-        await init_db()
+        await db_init()
     except Exception as e:
-        logger.error(f"init_db failed: {e} — continuing without DB")
-    await _preload_images()
+        log.error(f"db_init: {e}")
+    await img_preload()
 
 
 def main():
-    logger.info("=" * 50)
-    logger.info("KENTAVR MARKET bot starting...")
-    logger.info(f"BOT_TOKEN set: {'YES' if BOT_TOKEN else 'NO ← ERROR'}")
-    logger.info(f"ADMIN_IDS: {ADMIN_IDS}")
-    logger.info(f"DATABASE_URL set: {'YES' if DATABASE_URL else 'NO (SQLite)'}")
-    logger.info("=" * 50)
+    log.info("=" * 60)
+    log.info("KENTAVR MARKET бот стартует")
+    log.info(f"BOT_TOKEN:   {'SET ✓' if BOT_TOKEN else 'MISSING ✗'}")
+    log.info(f"ADMIN_IDS:   {ADMIN_IDS}")
+    log.info(f"DATABASE_URL:{'SET ✓' if DATABASE_URL else 'нет (SQLite)'}")
+    log.info("=" * 60)
 
     if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN не установлен в переменных окружения Railway!")
+        raise SystemExit("❌ BOT_TOKEN не задан! Добавь в Railway → Variables")
 
-    threading.Thread(target=_start_health, daemon=True).start()
+    # Health-check в отдельном потоке
+    threading.Thread(target=_run_health, daemon=True).start()
 
-    app = (Application.builder()
-           .token(BOT_TOKEN)
-           .post_init(_post_init)
-           .build())
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .post_init(on_init)
+        .build()
+    )
 
-    app.add_error_handler(on_error)
-    app.add_handler(CommandHandler("start",  cmd_start))
-    app.add_handler(CommandHandler("admin",  cmd_admin))
-    app.add_handler(CommandHandler("cancel", cmd_cancel))
-    app.add_handler(CallbackQueryHandler(on_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    app.add_error_handler(h_error)
+    app.add_handler(CommandHandler("start",  h_start))
+    app.add_handler(CommandHandler("admin",  h_admin))
+    app.add_handler(CommandHandler("cancel", h_cancel))
+    app.add_handler(CallbackQueryHandler(h_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, h_message))
 
-    logger.info("Starting polling...")
+    log.info("Polling started ✓")
     app.run_polling(drop_pending_updates=True)
 
 
