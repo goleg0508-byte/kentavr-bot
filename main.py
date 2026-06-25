@@ -48,6 +48,7 @@ SCREEN_NAMES = {
 
 db_pool = None
 USE_POSTGRES = False
+_img_cache: dict[str, bytes] = {}  # url → bytes, заполняется при старте
 
 
 # ── Health ──────────────────────────────────────────────────────────────────
@@ -312,28 +313,46 @@ SCREEN_TEXTS = {
 }
 
 
-async def _download(url: str) -> bytes | None:
+async def _download(url: str):
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         def _fetch():
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with urllib.request.urlopen(req, timeout=15) as r:
                 return r.read()
-        return await loop.run_in_executor(None, _fetch)
+        data = await loop.run_in_executor(None, _fetch)
+        logger.info(f"_download OK: {len(data)} bytes from {url[:60]}")
+        return data
     except Exception as e:
-        logger.warning(f"_download({url}): {e}")
+        logger.warning(f"_download FAILED: {e} — url={url[:60]}")
         return None
+
+
+async def _preload_images():
+    logger.info("Preloading images...")
+    for key, url in SCREEN_IMAGES.items():
+        data = await _download(url)
+        if data:
+            _img_cache[url] = data
+            logger.info(f"  cached [{key}] {len(data)} bytes")
+        else:
+            logger.warning(f"  FAILED [{key}]")
+    logger.info(f"Preload done. Cached: {len(_img_cache)}/{len(SCREEN_IMAGES)}")
 
 
 async def _show(bot, chat_id: int, key: str):
     custom_txt, custom_img = await _get_ct(key)
-    text   = custom_txt or SCREEN_TEXTS.get(key, SCREEN_TEXTS["main"])
-    markup = _kb_main() if key == "main" else _kb_back()
+    text      = custom_txt or SCREEN_TEXTS.get(key, SCREEN_TEXTS["main"])
+    markup    = _kb_main() if key == "main" else _kb_back()
     image_url = custom_img or SCREEN_IMAGES.get(key)
 
+    logger.info(f"_show key={key} chat={chat_id} image={'yes' if image_url else 'no'}")
+
     if image_url:
-        img_bytes = await _download(image_url)
+        img_bytes = _img_cache.get(image_url) or await _download(image_url)
         if img_bytes:
+            if image_url not in _img_cache:
+                _img_cache[image_url] = img_bytes
             try:
                 await bot.send_photo(
                     chat_id=chat_id,
@@ -342,12 +361,17 @@ async def _show(bot, chat_id: int, key: str):
                     reply_markup=markup,
                     parse_mode="HTML",
                 )
+                logger.info(f"_show send_photo OK key={key}")
                 return
             except Exception as e:
-                logger.warning(f"send_photo({key}): {e}")
+                logger.warning(f"_show send_photo FAILED key={key}: {e}")
 
-    await bot.send_message(
-        chat_id=chat_id, text=text, reply_markup=markup, parse_mode="HTML")
+    try:
+        await bot.send_message(
+            chat_id=chat_id, text=text, reply_markup=markup, parse_mode="HTML")
+        logger.info(f"_show send_message OK key={key}")
+    except Exception as e:
+        logger.error(f"_show send_message FAILED key={key}: {e}")
 
 
 # ── Admin ────────────────────────────────────────────────────────────────────
@@ -415,19 +439,26 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     bot  = context.bot
 
     logger.info(f"[cb] uid={uid} data={data!r}")
-    await q.answer()
+    try:
+        await q.answer()
+    except Exception as e:
+        logger.warning(f"[cb] q.answer() failed: {e}")
 
     # ── Навигация по экранам ─────────────────────────────────────────────────
     if data.startswith("go:"):
         key = data[3:]
+        logger.info(f"[cb] → screen '{key}'")
         context.user_data.clear()
         if key in ("buyer", "seller", "partner"):
             await _inc(key)
         try:
             await bot.delete_message(chat_id=cid, message_id=mid)
-        except Exception:
-            pass
-        await _show(bot, cid, key)
+        except Exception as e:
+            logger.info(f"[cb] delete_message skipped: {e}")
+        try:
+            await _show(bot, cid, key)
+        except Exception as e:
+            logger.error(f"[cb] _show FAILED key={key}: {e}", exc_info=True)
         return
 
     # ── Только для админов ───────────────────────────────────────────────────
@@ -580,6 +611,7 @@ async def _post_init(app: Application):
         await init_db()
     except Exception as e:
         logger.error(f"init_db failed: {e} — continuing without DB")
+    await _preload_images()
 
 
 def main():
