@@ -344,30 +344,31 @@ async def render_screen(screen_key: str, update: Update, context: ContextTypes.D
     except Exception:
         pass
 
+    chat_id = update.effective_chat.id
+
     if is_new:
         if image_url:
             try:
-                await update.message.reply_photo(photo=image_url, caption=text, reply_markup=markup, parse_mode="HTML")
+                await context.bot.send_photo(chat_id=chat_id, photo=image_url, caption=text, reply_markup=markup, parse_mode="HTML")
                 return
             except Exception:
                 pass
-        await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+        await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup, parse_mode="HTML")
         return
 
     query = update.callback_query
-    chat = query.message.chat
     try:
-        await query.message.delete()
+        await context.bot.delete_message(chat_id=chat_id, message_id=query.message.message_id)
     except Exception:
         pass
 
     if image_url:
         try:
-            await chat.send_photo(photo=image_url, caption=text, reply_markup=markup, parse_mode="HTML")
+            await context.bot.send_photo(chat_id=chat_id, photo=image_url, caption=text, reply_markup=markup, parse_mode="HTML")
             return
         except Exception:
             pass
-    await chat.send_message(text=text, reply_markup=markup, parse_mode="HTML")
+    await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=markup, parse_mode="HTML")
 
 
 # ── Admin helpers ──────────────────────────────────────────────────────────────
