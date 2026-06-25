@@ -16,38 +16,53 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
+    ConversationHandler,
     ContextTypes,
     filters,
 )
+from telegram.error import BadRequest, Forbidden, TelegramError
 
 load_dotenv()
 
-BOT_TOKEN    = os.getenv("BOT_TOKEN", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+PLATFORM_URL = os.getenv("PLATFORM_URL", "https://kentavr.world/?ref=kentavrmarket").strip()
+LANDING_URL = os.getenv("LANDING_URL", "https://kentavr.world").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
-ADMIN_IDS    = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
-DB_PATH      = "kentavr_stats.db"
+ADMIN_IDS = [int(x.strip()) for x in os.getenv("ADMIN_IDS", "").split(",") if x.strip()]
+
+DB_PATH = "kentavr_stats.db"
+
+BROADCAST_WAITING = 1
+EDIT_TEXT_SCREEN  = 2
+EDIT_TEXT_CONTENT = 3
+EDIT_IMAGE_SCREEN = 4
+EDIT_IMAGE_URL    = 5
 
 SCREEN_IMAGES = {
-    "main":    "https://i.postimg.cc/RFsmw06x/Chat-GPT-Image-4-iun-2026-g-06-12-26.png",
-    "buyer":   "https://i.postimg.cc/wTSw7dBP/Chat-GPT-Image-4-iun-2026-g-06-35-43.png",
-    "seller":  "https://i.postimg.cc/TwFDCfFH/IMG-20260604-035610-329.png",
-    "partner": "https://i.postimg.cc/fT5gqd27/Chat-GPT-Image-4-iun-2026-g-03-57-21.png",
+    "main":   "https://i.postimg.cc/RFsmw06x/Chat-GPT-Image-4-iun-2026-g-06-12-26.png",
+    "buyer":  "https://i.postimg.cc/wTSw7dBP/Chat-GPT-Image-4-iun-2026-g-06-35-43.png",
+    "seller": "https://i.postimg.cc/TwFDCfFH/IMG-20260604-035610-329.png",
+    "ttk":    "https://i.postimg.cc/fT5gqd27/Chat-GPT-Image-4-iun-2026-g-03-57-21.png",
 }
 
 SCREEN_NAMES = {
-    "main":    "🏠 Главный экран",
-    "buyer":   "🛒 Покупатель",
-    "seller":  "🏪 Продавец",
-    "partner": "💎 Партнёр / ТТК",
+    "main":         "🏠 Главный экран",
+    "buyer":        "🛒 Покупатель",
+    "buyer_detail": "📖 Покупатель (подробнее)",
+    "seller":       "🏪 Продавец",
+    "seller_detail":"📖 Продавец (подробнее)",
+    "ttk":          "💎 ТТК",
+    "ttk_crypto":   "❓ ТТК — Крипто?",
+    "ttk_benefit":  "💰 ТТК — Выгода",
+    "ttk_unique":   "⭐ ТТК — Уникальность",
+    "ttk_start":    "🚀 ТТК — Как начать",
+    "goto_platform":"🚀 Платформа",
 }
 
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-db_pool      = None
+db_pool = None
 USE_POSTGRES = False
 
 
@@ -55,14 +70,14 @@ USE_POSTGRES = False
 
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def log_message(self, *a): pass
+        if self.path in ("/", "/health"):
+            self.send_response(200); self.end_headers(); self.wfile.write(b"OK")
+        else:
+            self.send_response(404); self.end_headers()
+    def log_message(self, *args): pass
 
 def _start_health_server():
-    port = int(os.getenv("PORT", "8080"))
-    HTTPServer(("0.0.0.0", port), _HealthHandler).serve_forever()
+    HTTPServer(("0.0.0.0", int(os.getenv("PORT", "8080"))), _HealthHandler).serve_forever()
 
 
 # ── Database ───────────────────────────────────────────────────────────────────
@@ -73,565 +88,865 @@ async def init_db():
         try:
             import asyncpg
             db_pool = await asyncpg.create_pool(DATABASE_URL)
-            async with db_pool.acquire() as c:
-                await c.execute("CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value BIGINT DEFAULT 0)")
-                await c.execute("CREATE TABLE IF NOT EXISTS users (user_id BIGINT PRIMARY KEY, first_seen TIMESTAMP DEFAULT NOW(), last_seen TIMESTAMP DEFAULT NOW(), cnt INTEGER DEFAULT 0)")
-                await c.execute("CREATE TABLE IF NOT EXISTS screen_content (screen_key TEXT PRIMARY KEY, custom_text TEXT, custom_image TEXT)")
-                for k in ("starts","buyer","seller","partner"):
-                    await c.execute("INSERT INTO stats(key,value) VALUES($1,0) ON CONFLICT DO NOTHING", k)
+            async with db_pool.acquire() as conn:
+                await conn.execute("CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER DEFAULT 0)")
+                await conn.execute("CREATE TABLE IF NOT EXISTS unique_users (user_id BIGINT PRIMARY KEY, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, actions_count INTEGER DEFAULT 0)")
+                await conn.execute("CREATE TABLE IF NOT EXISTS user_sessions (user_id BIGINT PRIMARY KEY, last_screen TEXT DEFAULT 'main', last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
+                await conn.execute("CREATE TABLE IF NOT EXISTS screen_content (screen_key TEXT PRIMARY KEY, custom_text TEXT, custom_image TEXT)")
+                for key in ("starts","buyer_opens","seller_opens","ttk_opens","platform_clicks","commercial_opens"):
+                    await conn.execute("INSERT INTO stats (key, value) VALUES ($1, 0) ON CONFLICT (key) DO NOTHING", key)
             USE_POSTGRES = True
-            logger.info("DB: PostgreSQL OK")
+            logger.info("✅ PostgreSQL initialized")
             return
         except Exception as e:
-            logger.warning(f"DB: PostgreSQL failed ({e}), using SQLite")
+            logger.warning(f"PostgreSQL failed: {e}")
 
     import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("CREATE TABLE IF NOT EXISTS stats (key TEXT PRIMARY KEY, value INTEGER DEFAULT 0)")
-        await db.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, first_seen TEXT, last_seen TEXT, cnt INTEGER DEFAULT 0)")
+        await db.execute("CREATE TABLE IF NOT EXISTS unique_users (user_id INTEGER PRIMARY KEY, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, actions_count INTEGER DEFAULT 0)")
+        await db.execute("CREATE TABLE IF NOT EXISTS user_sessions (user_id INTEGER PRIMARY KEY, last_screen TEXT DEFAULT 'main', last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")
         await db.execute("CREATE TABLE IF NOT EXISTS screen_content (screen_key TEXT PRIMARY KEY, custom_text TEXT, custom_image TEXT)")
-        for k in ("starts","buyer","seller","partner"):
-            await db.execute("INSERT OR IGNORE INTO stats(key,value) VALUES(?,0)", (k,))
+        for key in ("starts","buyer_opens","seller_opens","ttk_opens","platform_clicks","commercial_opens"):
+            await db.execute("INSERT OR IGNORE INTO stats (key, value) VALUES (?, 0)", (key,))
         await db.commit()
-    logger.info("DB: SQLite OK")
+    logger.info("✅ SQLite initialized")
 
 
-async def inc(key: str):
-    try:
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
-                await c.execute("INSERT INTO stats(key,value) VALUES($1,1) ON CONFLICT(key) DO UPDATE SET value=stats.value+1", key)
-        else:
-            import aiosqlite
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute("INSERT INTO stats(key,value) VALUES(?,1) ON CONFLICT(key) DO UPDATE SET value=value+1", (key,))
-                await db.commit()
-    except Exception as e:
-        logger.warning(f"inc({key}): {e}")
+async def increment_stat(key: str):
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            await conn.execute("INSERT INTO stats (key, value) VALUES ($1, 1) ON CONFLICT (key) DO UPDATE SET value = stats.value + 1", key)
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("INSERT INTO stats (key, value) VALUES (?, 1) ON CONFLICT(key) DO UPDATE SET value = value + 1", (key,))
+            await db.commit()
 
 
-async def touch_user(uid: int):
-    try:
-        now = datetime.utcnow().isoformat()
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
-                await c.execute(
-                    "INSERT INTO users(user_id,first_seen,last_seen,cnt) VALUES($1,NOW(),NOW(),1) "
-                    "ON CONFLICT(user_id) DO UPDATE SET last_seen=NOW(), cnt=users.cnt+1", uid)
-        else:
-            import aiosqlite
-            async with aiosqlite.connect(DB_PATH) as db:
-                row = await (await db.execute("SELECT user_id FROM users WHERE user_id=?", (uid,))).fetchone()
-                if row:
-                    await db.execute("UPDATE users SET last_seen=?,cnt=cnt+1 WHERE user_id=?", (now, uid))
-                else:
-                    await db.execute("INSERT INTO users(user_id,first_seen,last_seen,cnt) VALUES(?,?,?,1)", (uid, now, now))
-                await db.commit()
-    except Exception as e:
-        logger.warning(f"touch_user: {e}")
+async def register_user(user_id: int):
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            existing = await conn.fetchval("SELECT user_id FROM unique_users WHERE user_id = $1", user_id)
+            if existing:
+                await conn.execute("UPDATE unique_users SET last_seen = CURRENT_TIMESTAMP, actions_count = actions_count + 1 WHERE user_id = $1", user_id)
+            else:
+                await conn.execute("INSERT INTO unique_users (user_id, first_seen, last_seen, actions_count) VALUES ($1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)", user_id)
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            cursor = await db.execute("SELECT user_id FROM unique_users WHERE user_id = ?", (user_id,))
+            if await cursor.fetchone():
+                await db.execute("UPDATE unique_users SET last_seen = CURRENT_TIMESTAMP, actions_count = actions_count + 1 WHERE user_id = ?", (user_id,))
+            else:
+                await db.execute("INSERT INTO unique_users (user_id, first_seen, last_seen, actions_count) VALUES (?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1)", (user_id,))
+            await db.commit()
+
+
+async def save_user_session(user_id: int, screen: str):
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            await conn.execute("INSERT INTO user_sessions (user_id, last_screen, last_updated) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (user_id) DO UPDATE SET last_screen = $2, last_updated = CURRENT_TIMESTAMP", user_id, screen)
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("INSERT INTO user_sessions (user_id, last_screen, last_updated) VALUES (?, ?, CURRENT_TIMESTAMP) ON CONFLICT(user_id) DO UPDATE SET last_screen = ?, last_updated = CURRENT_TIMESTAMP", (user_id, screen, screen))
+            await db.commit()
 
 
 async def get_stats() -> dict:
-    try:
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
-                rows  = await c.fetch("SELECT key,value FROM stats")
-                stats = {r['key']: r['value'] for r in rows}
-                stats['unique_users']  = await c.fetchval("SELECT COUNT(*) FROM users") or 0
-                stats['active_today']  = await c.fetchval("SELECT COUNT(*) FROM users WHERE last_seen::date=CURRENT_DATE") or 0
-                stats['total_actions'] = await c.fetchval("SELECT SUM(cnt) FROM users") or 0
-        else:
-            import aiosqlite
-            async with aiosqlite.connect(DB_PATH) as db:
-                rows  = await (await db.execute("SELECT key,value FROM stats")).fetchall()
-                stats = {r[0]: r[1] for r in rows}
-                stats['unique_users']  = (await (await db.execute("SELECT COUNT(*) FROM users")).fetchone())[0] or 0
-                stats['active_today']  = (await (await db.execute("SELECT COUNT(*) FROM users WHERE date(last_seen)=date('now')")).fetchone())[0] or 0
-                r = await (await db.execute("SELECT SUM(cnt) FROM users")).fetchone()
-                stats['total_actions'] = r[0] if r and r[0] else 0
-        return stats
-    except Exception as e:
-        logger.warning(f"get_stats: {e}")
-        return {}
-
-
-async def all_uids() -> list:
-    try:
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
-                return [r['user_id'] for r in await c.fetch("SELECT user_id FROM users")]
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch("SELECT key, value FROM stats")
+            stats = {row['key']: row['value'] for row in rows}
+            stats["unique_users"]  = await conn.fetchval("SELECT COUNT(*) FROM unique_users") or 0
+            stats["active_today"]  = await conn.fetchval("SELECT COUNT(*) FROM unique_users WHERE DATE(last_seen) = CURRENT_DATE") or 0
+            stats["total_actions"] = await conn.fetchval("SELECT SUM(actions_count) FROM unique_users") or 0
+    else:
         import aiosqlite
         async with aiosqlite.connect(DB_PATH) as db:
-            return [r[0] for r in await (await db.execute("SELECT user_id FROM users")).fetchall()]
-    except Exception:
-        return []
+            cursor = await db.execute("SELECT key, value FROM stats")
+            stats = {row[0]: row[1] for row in await cursor.fetchall()}
+            r2 = await (await db.execute("SELECT COUNT(*) FROM unique_users")).fetchone()
+            stats["unique_users"] = r2[0] or 0
+            r3 = await (await db.execute("SELECT COUNT(*) FROM unique_users WHERE DATE(last_seen) = DATE('now')")).fetchone()
+            stats["active_today"] = r3[0] or 0
+            r4 = await (await db.execute("SELECT SUM(actions_count) FROM unique_users")).fetchone()
+            stats["total_actions"] = r4[0] if r4 and r4[0] else 0
+    return stats
 
 
-async def get_ct(key: str):
-    try:
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
-                r = await c.fetchrow("SELECT custom_text,custom_image FROM screen_content WHERE screen_key=$1", key)
-                return (r['custom_text'], r['custom_image']) if r else (None, None)
+async def get_all_user_ids() -> list:
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            return [row['user_id'] for row in await conn.fetch("SELECT user_id FROM unique_users")]
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        return [row[0] for row in await (await db.execute("SELECT user_id FROM unique_users")).fetchall()]
+
+
+async def get_custom_text(screen_key: str):
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT custom_text FROM screen_content WHERE screen_key = $1", screen_key)
+            return row['custom_text'] if row else None
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        row = await (await db.execute("SELECT custom_text FROM screen_content WHERE screen_key = ?", (screen_key,))).fetchone()
+        return row[0] if row else None
+
+
+async def get_custom_image(screen_key: str):
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT custom_image FROM screen_content WHERE screen_key = $1", screen_key)
+            return row['custom_image'] if row else None
+    import aiosqlite
+    async with aiosqlite.connect(DB_PATH) as db:
+        row = await (await db.execute("SELECT custom_image FROM screen_content WHERE screen_key = ?", (screen_key,))).fetchone()
+        return row[0] if row else None
+
+
+async def save_custom_text(screen_key: str, text: str):
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            await conn.execute("INSERT INTO screen_content (screen_key, custom_text) VALUES ($1, $2) ON CONFLICT (screen_key) DO UPDATE SET custom_text = $2", screen_key, text)
+    else:
         import aiosqlite
         async with aiosqlite.connect(DB_PATH) as db:
-            r = await (await db.execute("SELECT custom_text,custom_image FROM screen_content WHERE screen_key=?", (key,))).fetchone()
-            return (r[0], r[1]) if r else (None, None)
-    except Exception:
-        return (None, None)
+            await db.execute("INSERT INTO screen_content (screen_key, custom_text) VALUES (?, ?) ON CONFLICT(screen_key) DO UPDATE SET custom_text = ?", (screen_key, text, text))
+            await db.commit()
 
 
-async def set_ct(key: str, text: str = None, image: str = None):
-    try:
-        if text is not None:
-            if USE_POSTGRES and db_pool:
-                async with db_pool.acquire() as c:
-                    await c.execute("INSERT INTO screen_content(screen_key,custom_text) VALUES($1,$2) ON CONFLICT(screen_key) DO UPDATE SET custom_text=$2", key, text)
-            else:
-                import aiosqlite
-                async with aiosqlite.connect(DB_PATH) as db:
-                    await db.execute("INSERT INTO screen_content(screen_key,custom_text) VALUES(?,?) ON CONFLICT(screen_key) DO UPDATE SET custom_text=?", (key,text,text))
-                    await db.commit()
-        if image is not None:
-            if USE_POSTGRES and db_pool:
-                async with db_pool.acquire() as c:
-                    await c.execute("INSERT INTO screen_content(screen_key,custom_image) VALUES($1,$2) ON CONFLICT(screen_key) DO UPDATE SET custom_image=$2", key, image)
-            else:
-                import aiosqlite
-                async with aiosqlite.connect(DB_PATH) as db:
-                    await db.execute("INSERT INTO screen_content(screen_key,custom_image) VALUES(?,?) ON CONFLICT(screen_key) DO UPDATE SET custom_image=?", (key,image,image))
-                    await db.commit()
-    except Exception as e:
-        logger.warning(f"set_ct: {e}")
+async def save_custom_image(screen_key: str, url: str):
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            await conn.execute("INSERT INTO screen_content (screen_key, custom_image) VALUES ($1, $2) ON CONFLICT (screen_key) DO UPDATE SET custom_image = $2", screen_key, url)
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("INSERT INTO screen_content (screen_key, custom_image) VALUES (?, ?) ON CONFLICT(screen_key) DO UPDATE SET custom_image = ?", (screen_key, url, url))
+            await db.commit()
 
 
-async def reset_ct(key: str, what: str):
-    try:
-        col = "custom_text" if what == "text" else "custom_image"
-        if USE_POSTGRES and db_pool:
-            async with db_pool.acquire() as c:
-                await c.execute(f"UPDATE screen_content SET {col}=NULL WHERE screen_key=$1", key)
-        else:
-            import aiosqlite
-            async with aiosqlite.connect(DB_PATH) as db:
-                await db.execute(f"UPDATE screen_content SET {col}=NULL WHERE screen_key=?", (key,))
-                await db.commit()
-    except Exception as e:
-        logger.warning(f"reset_ct: {e}")
+async def reset_custom_text(screen_key: str):
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE screen_content SET custom_text = NULL WHERE screen_key = $1", screen_key)
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("UPDATE screen_content SET custom_text = NULL WHERE screen_key = ?", (screen_key,))
+            await db.commit()
 
 
-def is_admin(uid: int) -> bool:
-    return uid in ADMIN_IDS
+async def reset_custom_image(screen_key: str):
+    if USE_POSTGRES and db_pool:
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE screen_content SET custom_image = NULL WHERE screen_key = $1", screen_key)
+    else:
+        import aiosqlite
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("UPDATE screen_content SET custom_image = NULL WHERE screen_key = ?", (screen_key,))
+            await db.commit()
+
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
 
 # ── Screens ────────────────────────────────────────────────────────────────────
 
 def screen_main():
     text = (
-        "👋 <b>Привет!</b>\n\n"
-        "Добро пожаловать в <b>KENTAVR MARKET</b> — социальный маркетплейс, где "
-        "покупатели, продавцы и партнёры работают в единой системе взаимной выгоды.\n\n"
-        "<i>Кем ты являешься?</i>"
+        "<b>Привет!</b>\n\n"
+        "Добро пожаловать в <b>KENTAVR MARKET</b>.\n\n"
+        "Это социальный маркетплейс нового поколения, объединяющий покупателей, "
+        "продавцов и партнёров в единую систему взаимной выгоды.\n\n"
+        "<blockquote>Основой модели является <b>Торговый Токен KENTAVR (ТТК)</b> — внутренний "
+        "цифровой инструмент, применяемый для бонусов, cashback и участия в развитии "
+        "сообщества.</blockquote>\n\n"
+        "Здесь каждый активный участник может использовать возможности торговой среды "
+        "не только для покупок или продаж, но и для участия в развитии общей системы.\n\n"
+        "<i>Что тебе сейчас ближе?</i>"
     )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛒 Я покупатель",          callback_data="go:buyer")],
-        [InlineKeyboardButton("🏪 Я продавец",            callback_data="go:seller")],
-        [InlineKeyboardButton("💎 Хочу стать партнёром",  callback_data="go:partner")],
-        [InlineKeyboardButton("🚀 Перейти на платформу",  url="https://shop.kentavr.world/")],
+    keyboard = [
+        [InlineKeyboardButton("🛒 Я покупатель", callback_data="buyer")],
+        [InlineKeyboardButton("🏪 Я продавец", callback_data="seller")],
+        [InlineKeyboardButton("💎 Хочу узнать про ТТК", callback_data="ttk")],
         [InlineKeyboardButton("📄 Коммерческое предложение", web_app=WebAppInfo(url="https://kentavrmarket.shop"))],
-    ])
-    return text, kb
+        [InlineKeyboardButton("🚀 Перейти на платформу", callback_data="goto_platform")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
 
 
 def screen_buyer():
     text = (
-        "🛒 <b>Для покупателей</b>\n\n"
-        "Покупай у проверенных участников сообщества и получай <b>кэшбэк в ТТК</b> "
-        "за каждую покупку.\n\n"
-        "Чем активнее ты покупаешь — тем больше возможностей открывается."
+        "<b>🛒 Для покупателя</b>\n\n"
+        "На большинстве торговых площадок всё заканчивается покупкой.\n\n"
+        "В <b>KENTAVR MARKET</b> подход иной.\n\n"
+        "<blockquote>Совершая покупки внутри сообщества, ты становишься частью среды, где "
+        "активность участников формирует общий товарооборот.</blockquote>\n\n"
+        "Дополнительно могут начисляться бонусы в виде <b>Торгового Токена KENTAVR (ТТК)</b>, "
+        "применяемого для различных возможностей и расчётов внутри системы.\n\n"
+        "Привычная покупка превращается в элемент более широкой модели взаимодействия.\n\n"
+        "<i>Оценить идею проще всего изнутри.</i>"
     )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Перейти на платформу", url="https://shop.kentavr.world/")],
-        [InlineKeyboardButton("🏠 Главное меню",         callback_data="go:main")],
-    ])
-    return text, kb
+    keyboard = [
+        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📖 Узнать подробнее", callback_data="buyer_detail")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_buyer_detail():
+    text = (
+        "<b>📖 Подробнее</b>\n\n"
+        "<b>KENTAVR MARKET</b> позиционируется как первый социальный маркетплейс, "
+        "где равное внимание уделяется и покупателям, и продавцам.\n\n"
+        "<blockquote>Модель выстроена вокруг идеи взаимной выгоды и развития внутреннего "
+        "товарооборота.</blockquote>\n\n"
+        "Приобретая товары, услуги или интеллектуальные продукты у участников "
+        "сообщества, ты одновременно поддерживаешь деловую среду, частью которой "
+        "сам являешься.\n\n"
+        "<i>Посмотри, как это работает на практике.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="buyer")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
 
 
 def screen_seller():
     text = (
-        "🏪 <b>Для продавцов</b>\n\n"
-        "Размести товары, услуги или экспертизу и получи доступ к активной аудитории.\n\n"
-        "Здесь строят <b>долгосрочные отношения</b>, а не гонятся за разовыми сделками."
+        "<b>🏪 Для продавца</b>\n\n"
+        "Если ты предлагаешь товары, услуги или интеллектуальные продукты, "
+        "<b>KENTAVR MARKET</b> — это не просто торговая витрина.\n\n"
+        "<blockquote>Ты получаешь доступ к сообществу активных людей, заинтересованных в "
+        "развитии внутреннего оборота и долгосрочном сотрудничестве.</blockquote>\n\n"
+        "В отличие от классических площадок, акцент здесь делается не только на "
+        "продажах, но и на формировании устойчивых деловых связей между участниками.\n\n"
+        "<i>Следующий шаг — познакомиться с возможностями системы.</i>"
     )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Перейти на платформу", url="https://shop.kentavr.world/")],
-        [InlineKeyboardButton("🏠 Главное меню",         callback_data="go:main")],
-    ])
-    return text, kb
+    keyboard = [
+        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("📖 Узнать подробнее", callback_data="seller_detail")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
 
 
-def screen_partner():
+def screen_seller_detail():
     text = (
-        "💎 <b>Партнёр / ТТК</b>\n\n"
-        "Участвуй в развитии платформы и получай <b>Торговый Токен KENTAVR (ТТК)</b>.\n\n"
-        "Его ценность растёт вместе с товарооборотом сообщества — "
-        "это не биржевая крипта, а реальная внутренняя экономика."
+        "<b>📖 Подробнее</b>\n\n"
+        "Ключевая идея <b>KENTAVR MARKET</b> — объединение покупателей и продавцов "
+        "внутри единой торговой среды.\n\n"
+        "<blockquote>Чем активнее развивается товарооборот, тем больше возможностей появляется "
+        "у участников: для продвижения предложений, расширения клиентской базы и "
+        "выстраивания партнёрских связей.</blockquote>\n\n"
+        "Модель ориентирована на формирование долгосрочных отношений, а не "
+        "разовых сделок.\n\n"
+        "<i>Посмотри, как это устроено изнутри.</i>"
     )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚀 Перейти на платформу", url="https://shop.kentavr.world/")],
-        [InlineKeyboardButton("🏠 Главное меню",         callback_data="go:main")],
-    ])
-    return text, kb
+    keyboard = [
+        [InlineKeyboardButton("🚀 Перейти на KENTAVR MARKET", callback_data="goto_platform")],
+        [InlineKeyboardButton("⬅️ Назад", callback_data="seller")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_ttk():
+    text = (
+        "<b>💎 Торговый Токен KENTAVR (ТТК)</b>\n\n"
+        "<b>ТТК</b> — это внутренний цифровой инструмент, действующий в рамках экосистемы "
+        "<b>KENTAVR MARKET</b>.\n\n"
+        "<blockquote>Применяется для начисления бонусов, cashback, частичной оплаты товаров "
+        "и услуг, а также как элемент участия в развитии сообщества.</blockquote>\n\n"
+        "<b>ТТК</b> — важная часть бизнес-модели платформы, связанная с внутренними "
+        "процессами торговой среды.\n\n"
+        "<i>Что тебя интересует?</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("❓ Это криптовалюта?", callback_data="ttk_crypto")],
+        [InlineKeyboardButton("💰 В чём выгода?", callback_data="ttk_benefit")],
+        [InlineKeyboardButton("⭐ Почему это уникально?", callback_data="ttk_unique")],
+        [InlineKeyboardButton("🚀 Как начать?", callback_data="ttk_start")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_ttk_crypto():
+    text = (
+        "<b>❓ Это криптовалюта?</b>\n\n"
+        "<b>ТТК</b> не является классической биржевой криптовалютой.\n\n"
+        "<blockquote>Это внутренний торговый токен, применяемый в системе <b>KENTAVR MARKET</b> "
+        "для бонусов, cashback и операций между участниками сообщества.</blockquote>\n\n"
+        "<i>Его ценность определяется активностью и товарооборотом внутри экосистемы, "
+        "а не биржевыми котировками.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_ttk_benefit():
+    text = (
+        "<b>💰 В чём выгода?</b>\n\n"
+        "Главная идея — объединение покупательской и предпринимательской активности "
+        "в единой среде.\n\n"
+        "<blockquote>Чем больше взаимодействий происходит внутри сообщества, тем активнее "
+        "развивается общий товарооборот и расширяются возможности для каждого "
+        "участника.</blockquote>\n\n"
+        "<i>ТТК служит связующим инструментом, который делает участие в системе "
+        "более предметным.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_ttk_unique():
+    text = (
+        "<b>⭐ Почему это уникально?</b>\n\n"
+        "<b>KENTAVR MARKET</b> сочетает возможности маркетплейса, делового сообщества "
+        "и токенизированной модели взаимодействия.\n\n"
+        "<blockquote>Такой подход формирует среду, где покупатели, продавцы и партнёры объединены "
+        "общей системой сотрудничества и внутреннего обмена ценностью.</blockquote>\n\n"
+        "<i>Это выходит за рамки привычного формата торговой площадки.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("⬅️ Назад", callback_data="ttk")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_ttk_start():
+    text = (
+        "<b>🚀 Как начать?</b>\n\n"
+        "<blockquote>Лучший способ разобраться в возможностях <b>KENTAVR MARKET</b> — "
+        "изучить систему изнутри.</blockquote>\n\n"
+        "<i>Перейди на платформу и выбери направление, которое интересно именно тебе: "
+        "покупки, продажи или партнёрство через ТТК.</i>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🚀 Перейти на платформу", callback_data="goto_platform")],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
+
+
+def screen_platform():
+    text = (
+        "<b>Отлично!</b>\n\n"
+        "Сейчас откроется <b>KENTAVR MARKET</b>.\n\n"
+        "<blockquote>Познакомься с возможностями сообщества, изучи предложения участников "
+        "и выбери направление, которое подходит именно тебе.</blockquote>"
+    )
+    keyboard = [
+        [InlineKeyboardButton("🚀 Открыть KENTAVR MARKET", url=PLATFORM_URL)],
+        [InlineKeyboardButton("🏠 Главное меню", callback_data="main")],
+    ]
+    return text, InlineKeyboardMarkup(keyboard)
 
 
 SCREENS = {
-    "main":    screen_main,
-    "buyer":   screen_buyer,
-    "seller":  screen_seller,
-    "partner": screen_partner,
+    "main": screen_main, "buyer": screen_buyer, "buyer_detail": screen_buyer_detail,
+    "seller": screen_seller, "seller_detail": screen_seller_detail, "ttk": screen_ttk,
+    "ttk_crypto": screen_ttk_crypto, "ttk_benefit": screen_ttk_benefit,
+    "ttk_unique": screen_ttk_unique, "ttk_start": screen_ttk_start, "goto_platform": screen_platform,
 }
+STAT_MAP = {"buyer": "buyer_opens", "seller": "seller_opens", "ttk": "ttk_opens", "goto_platform": "platform_clicks"}
 
 
-async def show_screen(bot, chat_id: int, key: str):
-    fn = SCREENS.get(key, screen_main)
-    default_text, markup = fn()
-    custom_text, custom_image = await get_ct(key)
-    text      = custom_text  or default_text
-    image_url = custom_image or SCREEN_IMAGES.get(key)
+# ── Render ─────────────────────────────────────────────────────────────────────
 
+async def render_screen(screen_key: str, update: Update, context: ContextTypes.DEFAULT_TYPE, is_new: bool = False):
+    user_id = update.effective_user.id
+    await save_user_session(user_id, screen_key)
+
+    builder = SCREENS.get(screen_key, screen_main)
+    default_text, markup = builder()
+
+    custom_text  = await get_custom_text(screen_key)
+    custom_image = await get_custom_image(screen_key)
+    text      = custom_text  if custom_text  else default_text
+    image_url = custom_image if custom_image else SCREEN_IMAGES.get(screen_key)
+
+    if screen_key in STAT_MAP:
+        await increment_stat(STAT_MAP[screen_key])
+
+    if is_new:
+        if image_url:
+            await update.message.reply_photo(photo=image_url, caption=text, reply_markup=markup, parse_mode="HTML")
+        else:
+            await update.message.reply_text(text, reply_markup=markup, parse_mode="HTML")
+        return
+
+    query = update.callback_query
+    try:
+        await query.message.delete()
+    except Exception:
+        pass
     if image_url:
+        await query.message.chat.send_photo(photo=image_url, caption=text, reply_markup=markup, parse_mode="HTML")
+    else:
+        await query.message.chat.send_message(text=text, reply_markup=markup, parse_mode="HTML")
+
+
+# ── Admin helpers ──────────────────────────────────────────────────────────────
+
+async def _send(update: Update, text: str, keyboard=None, parse_mode="HTML"):
+    markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    if update.callback_query:
         try:
-            await bot.send_photo(chat_id=chat_id, photo=image_url,
-                                 caption=text, reply_markup=markup, parse_mode="HTML")
+            await update.callback_query.edit_message_text(text, reply_markup=markup, parse_mode=parse_mode)
             return
-        except Exception as e:
-            logger.warning(f"send_photo failed for {key}: {e}")
+        except Exception:
+            chat = update.callback_query.message.chat
+            await chat.send_message(text, reply_markup=markup, parse_mode=parse_mode)
+    else:
+        await update.message.reply_text(text, reply_markup=markup, parse_mode=parse_mode)
 
-    await bot.send_message(chat_id=chat_id, text=text,
-                           reply_markup=markup, parse_mode="HTML")
+
+async def show_admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    stats = await get_stats()
+    text = (
+        "🎛 <b>ПАНЕЛЬ АДМИНИСТРАТОРА</b>\n"
+        "<i>KENTAVR MARKET Bot</i>\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"👥 Пользователей: <b>{stats.get('unique_users', 0)}</b>   "
+        f"📅 Сегодня: <b>{stats.get('active_today', 0)}</b>\n"
+        f"🎯 Всего действий: <b>{stats.get('total_actions', 0)}</b>\n\n"
+        "<i>Выбери действие:</i>"
+    )
+    keyboard = [
+        [
+            InlineKeyboardButton("📊 Статистика",    callback_data="admin_stats"),
+            InlineKeyboardButton("👥 Пользователи",  callback_data="admin_users"),
+        ],
+        [
+            InlineKeyboardButton("📢 Рассылка",      callback_data="admin_broadcast"),
+            InlineKeyboardButton("📥 Экспорт CSV",   callback_data="admin_export"),
+        ],
+        [InlineKeyboardButton("✏️ Изменить тексты экранов",    callback_data="admin_edit_texts")],
+        [InlineKeyboardButton("🖼 Изменить картинки экранов",  callback_data="admin_edit_images")],
+        [InlineKeyboardButton("🏠 На главную",                 callback_data="main")],
+    ]
+    await _send(update, text, keyboard)
 
 
-# ── Handlers ───────────────────────────────────────────────────────────────────
+# ── Admin commands ─────────────────────────────────────────────────────────────
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    logger.info(f"[start] uid={update.effective_user.id}")
-    context.user_data.clear()
-    await asyncio.gather(inc("starts"), touch_user(update.effective_user.id))
-    await show_screen(context.bot, update.effective_chat.id, "main")
+    user_id = update.effective_user.id
+    await asyncio.gather(increment_stat("starts"), register_user(user_id))
+    await render_screen("main", update, context, is_new=True)
 
 
 async def cmd_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if not is_admin(uid):
+    if not is_admin(update.effective_user.id):
         await update.message.reply_text("⛔ Доступ запрещён.")
         return
-    context.user_data.clear()
-    await _show_admin_panel(context.bot, update.effective_chat.id)
+    await show_admin_panel(update, context)
 
 
-async def _show_admin_panel(bot, chat_id: int, message_id: int = None):
-    s    = await get_stats()
-    text = (
-        "🎛 <b>ПАНЕЛЬ АДМИНИСТРАТОРА</b>\n<i>KENTAVR MARKET</i>\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"👥 Пользователей: <b>{s.get('unique_users',0)}</b>  "
-        f"📅 Сегодня: <b>{s.get('active_today',0)}</b>\n"
-        f"🎯 Действий: <b>{s.get('total_actions',0)}</b>\n\n"
-        "<i>Выбери действие:</i>"
-    )
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Статистика",   callback_data="adm:stats"),
-         InlineKeyboardButton("👥 Пользователи", callback_data="adm:users")],
-        [InlineKeyboardButton("📢 Рассылка",     callback_data="adm:broadcast"),
-         InlineKeyboardButton("📥 Экспорт",      callback_data="adm:export")],
-        [InlineKeyboardButton("✏️ Тексты экранов",   callback_data="adm:texts")],
-        [InlineKeyboardButton("🖼 Картинки экранов",  callback_data="adm:images")],
-        [InlineKeyboardButton("🏠 На главную",        callback_data="go:main")],
-    ])
-    if message_id:
-        try:
-            await bot.edit_message_text(chat_id=chat_id, message_id=message_id,
-                                        text=text, reply_markup=kb, parse_mode="HTML")
-            return
-        except Exception:
-            pass
-    await bot.send_message(chat_id=chat_id, text=text, reply_markup=kb, parse_mode="HTML")
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    text = "🤖 <b>Доступные команды</b>\n\n👤 <b>Для всех:</b>\n  /start — Запустить бота\n  /help — Помощь\n"
+    keyboard = []
+    if is_admin(user_id):
+        text += "\n🔐 <b>Администратор:</b>\n  /admin — Панель управления\n  /broadcast — Рассылка\n  /export — Экспорт CSV"
+        keyboard = [[InlineKeyboardButton("🎛 Открыть панель", callback_data="admin_panel")]]
+    keyboard.append([InlineKeyboardButton("🏠 Главное меню", callback_data="main")])
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="HTML")
 
 
-async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q    = update.callback_query
-    data = q.data
-    uid  = update.effective_user.id
-    cid  = update.effective_chat.id
-    mid  = q.message.message_id
-    bot  = context.bot
+# ── Admin callbacks ────────────────────────────────────────────────────────────
 
-    logger.info(f"[cb] uid={uid} data={data}")
-    await q.answer()
-
-    # ── Screen navigation (any user) ───────────────────────────────────────────
-    if data.startswith("go:"):
-        key = data[3:]
-        context.user_data.clear()
-        if key in ("buyer", "seller", "partner"):
-            await inc(key)
-        try:
-            await bot.delete_message(chat_id=cid, message_id=mid)
-        except Exception:
-            pass
-        await show_screen(bot, cid, key)
+async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if not is_admin(update.effective_user.id):
+        await query.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
-    # ── Admin actions ──────────────────────────────────────────────────────────
-    if not is_admin(uid):
-        logger.info(f"[cb] non-admin uid={uid} tried {data}")
-        return
+    data = query.data
 
-    if data == "adm:panel":
-        context.user_data.clear()
-        await _show_admin_panel(bot, cid, mid)
+    if data == "admin_panel":
+        await show_admin_panel(update, context)
 
-    elif data == "adm:stats":
-        s = await get_stats()
-        t = (
-            "📊 <b>СТАТИСТИКА</b>\n━━━━━━━━━━━━━━━━━━━━━━\n\n"
-            f"👥 Пользователей: <code>{s.get('unique_users',0)}</code>\n"
-            f"📅 Активных сегодня: <code>{s.get('active_today',0)}</code>\n"
-            f"🎯 Всего действий: <code>{s.get('total_actions',0)}</code>\n\n"
-            f"▶️ /start: <code>{s.get('starts',0)}</code>\n"
-            f"🛒 Покупатель: <code>{s.get('buyer',0)}</code>\n"
-            f"🏪 Продавец: <code>{s.get('seller',0)}</code>\n"
-            f"💎 Партнёр: <code>{s.get('partner',0)}</code>"
+    elif data == "admin_stats":
+        stats = await get_stats()
+        text = (
+            "📊 <b>СТАТИСТИКА</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👥 Всего пользователей: <code>{stats.get('unique_users', 0)}</code>\n"
+            f"📅 Активных сегодня: <code>{stats.get('active_today', 0)}</code>\n"
+            f"🎯 Всего действий: <code>{stats.get('total_actions', 0)}</code>\n\n"
+            f"▶️ /start запусков: <code>{stats.get('starts', 0)}</code>\n"
+            f"🛒 Покупатель: <code>{stats.get('buyer_opens', 0)}</code>\n"
+            f"🏪 Продавец: <code>{stats.get('seller_opens', 0)}</code>\n"
+            f"💎 ТТК: <code>{stats.get('ttk_opens', 0)}</code>\n"
+            f"📄 КП открытий: <code>{stats.get('commercial_opens', 0)}</code>\n"
+            f"🚀 Переходов на платформу: <code>{stats.get('platform_clicks', 0)}</code>"
         )
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="adm:panel")]])
+        await _send(update, text, [[InlineKeyboardButton("⬅️ Назад в панель", callback_data="admin_panel")]])
+
+    elif data == "admin_users":
+        users = await get_all_user_ids()
+        text = f"👥 <b>Пользователи бота</b>\n\nВсего: <code>{len(users)}</code>\n\nПоследние 20:\n"
+        for i, uid in enumerate(users[-20:][::-1], 1):
+            text += f"{i}. <code>{uid}</code>\n"
+        await _send(update, text, [[InlineKeyboardButton("⬅️ Назад в панель", callback_data="admin_panel")]])
+
+    elif data == "admin_export":
+        users = await get_all_user_ids()
+        stats = await get_stats()
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(['Метрика', 'Значение'])
+        for k, label in [
+            ('unique_users','Всего пользователей'), ('active_today','Активных сегодня'),
+            ('total_actions','Всего действий'), ('starts','/start'),
+            ('buyer_opens','Покупатель'), ('seller_opens','Продавец'),
+            ('ttk_opens','ТТК'), ('platform_clicks','Платформа'),
+            ('commercial_opens','КП'),
+        ]:
+            writer.writerow([label, stats.get(k, 0)])
+        writer.writerow([])
+        writer.writerow(['ID пользователей'])
+        for uid in users:
+            writer.writerow([uid])
+        output.seek(0)
+        await query.message.chat.send_document(
+            document=io.BytesIO(output.getvalue().encode('utf-8')),
+            filename=f"kentavr_stats_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+            caption="📊 Экспорт статистики KENTAVR MARKET",
+        )
+
+
+# ── Broadcast ──────────────────────────────────────────────────────────────────
+
+async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        if update.message:
+            await update.message.reply_text("⛔ Доступ запрещён.")
+        return ConversationHandler.END
+    users = await get_all_user_ids()
+    text = (
+        f"📢 <b>Рассылка</b>\n\n"
+        f"Аудитория: <b>{len(users)} чел.</b>\n\n"
+        f"Отправь текст сообщения (HTML поддерживается).\n"
+        f"/cancel — отмена"
+    )
+    kb = [[InlineKeyboardButton("❌ Отмена", callback_data="admin_panel")]]
+    await _send(update, text, kb)
+    return BROADCAST_WAITING
+
+
+async def cmd_broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    users = await get_all_user_ids()
+    msg = update.message.text
+    sent = failed = 0
+    status = await update.message.reply_text(f"⏳ Отправляю {len(users)} пользователям...")
+    for i, uid in enumerate(users):
         try:
-            await bot.edit_message_text(chat_id=cid, message_id=mid, text=t, reply_markup=kb, parse_mode="HTML")
+            await context.bot.send_message(uid, msg, parse_mode="HTML")
+            sent += 1
         except Exception:
-            await bot.send_message(chat_id=cid, text=t, reply_markup=kb, parse_mode="HTML")
-
-    elif data == "adm:users":
-        uids = await all_uids()
-        t    = f"👥 <b>Пользователи</b>\nВсего: <code>{len(uids)}</code>\n\n"
-        for i, u in enumerate(uids[-20:][::-1], 1):
-            t += f"{i}. <code>{u}</code>\n"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Назад", callback_data="adm:panel")]])
-        try:
-            await bot.edit_message_text(chat_id=cid, message_id=mid, text=t, reply_markup=kb, parse_mode="HTML")
-        except Exception:
-            await bot.send_message(chat_id=cid, text=t, reply_markup=kb, parse_mode="HTML")
-
-    elif data == "adm:export":
-        uids = await all_uids()
-        s    = await get_stats()
-        buf  = io.StringIO()
-        w    = csv.writer(buf)
-        w.writerow(["Метрика", "Значение"])
-        for k, lbl in [("unique_users","Пользователей"),("active_today","Сегодня"),
-                        ("total_actions","Действий"),("starts","/start"),
-                        ("buyer","Покупатель"),("seller","Продавец"),("partner","Партнёр")]:
-            w.writerow([lbl, s.get(k, 0)])
-        w.writerow([]); w.writerow(["ID"])
-        for u in uids: w.writerow([u])
-        buf.seek(0)
-        await bot.send_document(chat_id=cid,
-            document=io.BytesIO(buf.getvalue().encode()),
-            filename=f"stats_{datetime.now():%Y%m%d_%H%M%S}.csv",
-            caption="📊 Экспорт KENTAVR MARKET")
-
-    elif data == "adm:broadcast":
-        uids = await all_uids()
-        context.user_data['state'] = 'broadcast'
-        t  = f"📢 <b>Рассылка</b>\n\nАудитория: <b>{len(uids)} чел.</b>\n\nОтправь текст. /cancel — отмена"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="adm:panel")]])
-        try:
-            await bot.edit_message_text(chat_id=cid, message_id=mid, text=t, reply_markup=kb, parse_mode="HTML")
-        except Exception:
-            await bot.send_message(chat_id=cid, text=t, reply_markup=kb, parse_mode="HTML")
-
-    elif data == "adm:texts":
-        context.user_data['state'] = 'texts_menu'
-        rows = [[InlineKeyboardButton(name, callback_data=f"adm:pick_t:{k}")]
-                for k, name in SCREEN_NAMES.items()]
-        rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="adm:panel")])
-        kb = InlineKeyboardMarkup(rows)
-        try:
-            await bot.edit_message_text(chat_id=cid, message_id=mid,
-                text="✏️ <b>Тексты</b>\n\nВыбери экран:", reply_markup=kb, parse_mode="HTML")
-        except Exception:
-            await bot.send_message(chat_id=cid,
-                text="✏️ <b>Тексты</b>\n\nВыбери экран:", reply_markup=kb, parse_mode="HTML")
-
-    elif data.startswith("adm:pick_t:"):
-        sk = data[len("adm:pick_t:"):]
-        context.user_data.update({'state': 'edit_text', 'sk': sk})
-        ct, _ = await get_ct(sk)
-        def_t, _ = SCREENS.get(sk, screen_main)()
-        cur   = ct or def_t
-        prev  = cur[:400] + ("…" if len(cur) > 400 else "")
-        lbl   = "изменён" if ct else "оригинал"
-        t = (f"✏️ <b>{SCREEN_NAMES.get(sk,sk)}</b> ({lbl})\n\n"
-             f"<b>Текущий текст:</b>\n<blockquote>{prev}</blockquote>\n\n"
-             "Отправь новый текст. /cancel — отмена")
-        rows = []
-        if ct:
-            rows.append([InlineKeyboardButton("🔄 Сбросить", callback_data=f"adm:rst_t:{sk}")])
-        rows.append([InlineKeyboardButton("⬅️ К списку", callback_data="adm:texts")])
-        try:
-            await bot.edit_message_text(chat_id=cid, message_id=mid, text=t,
-                reply_markup=InlineKeyboardMarkup(rows), parse_mode="HTML")
-        except Exception:
-            await bot.send_message(chat_id=cid, text=t,
-                reply_markup=InlineKeyboardMarkup(rows), parse_mode="HTML")
-
-    elif data.startswith("adm:rst_t:"):
-        sk = data[len("adm:rst_t:"):]
-        await reset_ct(sk, "text")
-        context.user_data.clear()
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В панель", callback_data="adm:panel")]])
-        try:
-            await bot.edit_message_text(chat_id=cid, message_id=mid,
-                text=f"🔄 Текст <b>{SCREEN_NAMES.get(sk,sk)}</b> сброшен.",
-                reply_markup=kb, parse_mode="HTML")
-        except Exception:
-            await bot.send_message(chat_id=cid,
-                text=f"🔄 Текст <b>{SCREEN_NAMES.get(sk,sk)}</b> сброшен.",
-                reply_markup=kb, parse_mode="HTML")
-
-    elif data == "adm:images":
-        context.user_data['state'] = 'images_menu'
-        rows = [[InlineKeyboardButton(SCREEN_NAMES[k], callback_data=f"adm:pick_i:{k}")]
-                for k in SCREEN_NAMES]
-        rows.append([InlineKeyboardButton("⬅️ Назад", callback_data="adm:panel")])
-        kb = InlineKeyboardMarkup(rows)
-        try:
-            await bot.edit_message_text(chat_id=cid, message_id=mid,
-                text="🖼 <b>Картинки</b>\n\nВыбери экран:", reply_markup=kb, parse_mode="HTML")
-        except Exception:
-            await bot.send_message(chat_id=cid,
-                text="🖼 <b>Картинки</b>\n\nВыбери экран:", reply_markup=kb, parse_mode="HTML")
-
-    elif data.startswith("adm:pick_i:"):
-        sk = data[len("adm:pick_i:"):]
-        context.user_data.update({'state': 'edit_image', 'sk': sk})
-        _, ci = await get_ct(sk)
-        cur   = ci or SCREEN_IMAGES.get(sk, "нет")
-        lbl   = "изменена" if ci else "оригинал"
-        t = (f"🖼 <b>{SCREEN_NAMES.get(sk,sk)}</b> ({lbl})\n\n"
-             f"<b>Текущая:</b>\n<code>{cur}</code>\n\n"
-             "Отправь новую ссылку (https://…). /cancel — отмена")
-        rows = []
-        if ci:
-            rows.append([InlineKeyboardButton("🔄 Сбросить", callback_data=f"adm:rst_i:{sk}")])
-        rows.append([InlineKeyboardButton("⬅️ К списку", callback_data="adm:images")])
-        try:
-            await bot.edit_message_text(chat_id=cid, message_id=mid, text=t,
-                reply_markup=InlineKeyboardMarkup(rows), parse_mode="HTML")
-        except Exception:
-            await bot.send_message(chat_id=cid, text=t,
-                reply_markup=InlineKeyboardMarkup(rows), parse_mode="HTML")
-
-    elif data.startswith("adm:rst_i:"):
-        sk = data[len("adm:rst_i:"):]
-        await reset_ct(sk, "image")
-        context.user_data.clear()
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В панель", callback_data="adm:panel")]])
-        try:
-            await bot.edit_message_text(chat_id=cid, message_id=mid,
-                text=f"🔄 Картинка <b>{SCREEN_NAMES.get(sk,sk)}</b> сброшена.",
-                reply_markup=kb, parse_mode="HTML")
-        except Exception:
-            await bot.send_message(chat_id=cid,
-                text=f"🔄 Картинка <b>{SCREEN_NAMES.get(sk,sk)}</b> сброшена.",
-                reply_markup=kb, parse_mode="HTML")
+            failed += 1
+        if (i + 1) % 30 == 0:
+            await asyncio.sleep(1)
+    kb = [[InlineKeyboardButton("⬅️ В панель", callback_data="admin_panel")]]
+    await status.edit_text(
+        f"✅ Доставлено: <b>{sent}</b>\n❌ Ошибок: <b>{failed}</b>",
+        reply_markup=InlineKeyboardMarkup(kb),
+        parse_mode="HTML",
+    )
+    return ConversationHandler.END
 
 
-async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid   = update.effective_user.id
-    text  = update.message.text or ""
-    state = context.user_data.get('state')
-
-    if text.strip() == "/cancel":
-        context.user_data.clear()
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В панель", callback_data="adm:panel")]])
-        await update.message.reply_text("❌ Отменено.", reply_markup=kb)
-        return
-
-    if not is_admin(uid) or not state:
-        return
-
-    sk = context.user_data.get('sk')
-
-    if state == 'broadcast':
-        uids   = await all_uids()
-        sent   = failed = 0
-        msg    = await update.message.reply_text(f"⏳ Отправляю {len(uids)} пользователям…")
-        for i, u in enumerate(uids):
-            try:
-                await context.bot.send_message(u, text, parse_mode="HTML")
-                sent += 1
-            except Exception:
-                failed += 1
-            if (i + 1) % 30 == 0:
-                await asyncio.sleep(1)
-        context.user_data.clear()
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ В панель", callback_data="adm:panel")]])
-        await msg.edit_text(f"✅ Доставлено: <b>{sent}</b>\n❌ Ошибок: <b>{failed}</b>",
-                            reply_markup=kb, parse_mode="HTML")
-
-    elif state == 'edit_text' and sk:
-        await set_ct(sk, text=text)
-        context.user_data.clear()
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✏️ Изменить ещё", callback_data="adm:texts")],
-            [InlineKeyboardButton("⬅️ В панель",     callback_data="adm:panel")],
-        ])
-        await update.message.reply_text(
-            f"✅ Текст <b>{SCREEN_NAMES.get(sk,sk)}</b> обновлён!",
-            reply_markup=kb, parse_mode="HTML")
-
-    elif state == 'edit_image' and sk:
-        url = text.strip()
-        if not url.startswith("http"):
-            await update.message.reply_text("❌ Ссылка должна начинаться с https://")
-            return
-        await set_ct(sk, image=url)
-        context.user_data.clear()
-        kb = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🖼 Изменить ещё", callback_data="adm:images")],
-            [InlineKeyboardButton("⬅️ В панель",     callback_data="adm:panel")],
-        ])
-        await update.message.reply_text(
-            f"✅ Картинка <b>{SCREEN_NAMES.get(sk,sk)}</b> обновлена!",
-            reply_markup=kb, parse_mode="HTML")
+async def cmd_broadcast_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    kb = [[InlineKeyboardButton("⬅️ В панель", callback_data="admin_panel")]]
+    await update.message.reply_text("❌ Рассылка отменена.", reply_markup=InlineKeyboardMarkup(kb))
+    return ConversationHandler.END
 
 
-async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(f"Error: {context.error}", exc_info=context.error)
+# ── Edit texts ─────────────────────────────────────────────────────────────────
+
+async def admin_edit_texts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    keyboard = [
+        [InlineKeyboardButton(name, callback_data=f"edit_text_{key}")]
+        for key, name in SCREEN_NAMES.items()
+    ]
+    keyboard.append([InlineKeyboardButton("⬅️ Назад в панель", callback_data="admin_panel")])
+    await _send(update, "✏️ <b>Редактирование текстов</b>\n\nВыбери экран:", keyboard)
+    return EDIT_TEXT_SCREEN
+
+
+async def admin_edit_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    screen_key = query.data[len("edit_text_"):]
+    context.user_data['editing_screen'] = screen_key
+
+    custom_text = await get_custom_text(screen_key)
+    default_text, _ = SCREENS.get(screen_key, screen_main)()
+    current = custom_text if custom_text else default_text
+    label   = "✏️ изменён" if custom_text else "📝 оригинал"
+
+    preview = current[:600] + ("…" if len(current) > 600 else "")
+    text = (
+        f"✏️ <b>{SCREEN_NAMES.get(screen_key, screen_key)}</b> <i>({label})</i>\n\n"
+        f"<b>Текущий текст:</b>\n<blockquote>{preview}</blockquote>\n\n"
+        f"Отправь новый текст (HTML теги поддерживаются)\nили /cancel для отмены"
+    )
+    keyboard = []
+    if custom_text:
+        keyboard.append([InlineKeyboardButton("🔄 Сбросить к оригиналу", callback_data=f"reset_text_{screen_key}")])
+    keyboard.append([InlineKeyboardButton("⬅️ К списку экранов", callback_data="admin_edit_texts")])
+    await _send(update, text, keyboard)
+    return EDIT_TEXT_CONTENT
+
+
+async def admin_save_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    screen_key = context.user_data.get('editing_screen')
+    if not screen_key:
+        return ConversationHandler.END
+    await save_custom_text(screen_key, update.message.text)
+    name = SCREEN_NAMES.get(screen_key, screen_key)
+    kb = [
+        [InlineKeyboardButton("✏️ Изменить ещё", callback_data="admin_edit_texts")],
+        [InlineKeyboardButton("⬅️ В панель",     callback_data="admin_panel")],
+    ]
+    await update.message.reply_text(f"✅ Текст <b>{name}</b> обновлён!", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    return ConversationHandler.END
+
+
+async def admin_reset_text_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    screen_key = query.data[len("reset_text_"):]
+    await reset_custom_text(screen_key)
+    name = SCREEN_NAMES.get(screen_key, screen_key)
+    kb = [[InlineKeyboardButton("⬅️ В панель", callback_data="admin_panel")]]
+    await _send(update, f"🔄 Текст <b>{name}</b> сброшен к оригиналу.", kb)
+    return ConversationHandler.END
+
+
+async def admin_edit_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data.pop('editing_screen', None)
+    kb = [[InlineKeyboardButton("⬅️ В панель", callback_data="admin_panel")]]
+    await update.message.reply_text("❌ Редактирование отменено.", reply_markup=InlineKeyboardMarkup(kb))
+    return ConversationHandler.END
+
+
+async def admin_panel_fallback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+    context.user_data.pop('editing_screen', None)
+    await show_admin_panel(update, context)
+    return ConversationHandler.END
+
+
+# ── Edit images ────────────────────────────────────────────────────────────────
+
+async def admin_edit_images_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        await update.callback_query.answer()
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    keyboard = [
+        [InlineKeyboardButton(SCREEN_NAMES[k], callback_data=f"edit_image_{k}")]
+        for k in ["main", "buyer", "seller", "ttk"]
+    ]
+    keyboard.append([InlineKeyboardButton("⬅️ Назад в панель", callback_data="admin_panel")])
+    await _send(update, "🖼 <b>Редактирование картинок</b>\n\nВыбери экран:", keyboard)
+    return EDIT_IMAGE_SCREEN
+
+
+async def admin_edit_image_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    screen_key = query.data[len("edit_image_"):]
+    context.user_data['editing_screen'] = screen_key
+
+    custom_image = await get_custom_image(screen_key)
+    current = custom_image if custom_image else SCREEN_IMAGES.get(screen_key, "нет")
+    label   = "✏️ изменена" if custom_image else "📝 оригинал"
+
+    text = (
+        f"🖼 <b>{SCREEN_NAMES.get(screen_key, screen_key)}</b> <i>({label})</i>\n\n"
+        f"<b>Текущая картинка:</b>\n<code>{current}</code>\n\n"
+        f"Отправь новую ссылку на картинку (https://…)\nили /cancel для отмены"
+    )
+    keyboard = []
+    if custom_image:
+        keyboard.append([InlineKeyboardButton("🔄 Сбросить к оригиналу", callback_data=f"reset_image_{screen_key}")])
+    keyboard.append([InlineKeyboardButton("⬅️ К списку экранов", callback_data="admin_edit_images")])
+    await _send(update, text, keyboard)
+    return EDIT_IMAGE_URL
+
+
+async def admin_save_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.effective_user.id):
+        return ConversationHandler.END
+    screen_key = context.user_data.get('editing_screen')
+    if not screen_key:
+        return ConversationHandler.END
+    url = update.message.text.strip()
+    if not url.startswith("http"):
+        await update.message.reply_text("❌ Ссылка должна начинаться с https://. Попробуй ещё раз:")
+        return EDIT_IMAGE_URL
+    await save_custom_image(screen_key, url)
+    name = SCREEN_NAMES.get(screen_key, screen_key)
+    kb = [
+        [InlineKeyboardButton("🖼 Изменить ещё", callback_data="admin_edit_images")],
+        [InlineKeyboardButton("⬅️ В панель",     callback_data="admin_panel")],
+    ]
+    await update.message.reply_text(f"✅ Картинка <b>{name}</b> обновлена!", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    return ConversationHandler.END
+
+
+async def admin_reset_image_cb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    screen_key = query.data[len("reset_image_"):]
+    await reset_custom_image(screen_key)
+    name = SCREEN_NAMES.get(screen_key, screen_key)
+    kb = [[InlineKeyboardButton("⬅️ В панель", callback_data="admin_panel")]]
+    await _send(update, f"🔄 Картинка <b>{name}</b> сброшена к оригиналу.", kb)
+    return ConversationHandler.END
+
+
+# ── Misc handlers ──────────────────────────────────────────────────────────────
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await render_screen(query.data, update, context)
+
+
+async def web_app_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await increment_stat("commercial_opens")
+
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error(f"Unhandled error: {context.error}")
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
-async def _post_init(app):
+async def async_main():
     await init_db()
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_error_handler(error_handler)
+
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("help",  cmd_help))
+    app.add_handler(CommandHandler("admin", cmd_admin))
+
+    # Broadcast conversation
+    app.add_handler(ConversationHandler(
+        entry_points=[
+            CommandHandler("broadcast", cmd_broadcast),
+            CallbackQueryHandler(cmd_broadcast, pattern="^admin_broadcast$"),
+        ],
+        states={
+            BROADCAST_WAITING: [MessageHandler(filters.TEXT & ~filters.COMMAND, cmd_broadcast_send)],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cmd_broadcast_cancel),
+            CallbackQueryHandler(admin_panel_fallback, pattern="^admin_panel$"),
+        ],
+    ))
+
+    # Edit content conversation
+    app.add_handler(ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(admin_edit_texts_menu,  pattern="^admin_edit_texts$"),
+            CallbackQueryHandler(admin_edit_images_menu, pattern="^admin_edit_images$"),
+        ],
+        states={
+            EDIT_TEXT_SCREEN: [
+                CallbackQueryHandler(admin_edit_text_select, pattern="^edit_text_"),
+                CallbackQueryHandler(admin_panel_fallback,   pattern="^admin_panel$"),
+            ],
+            EDIT_TEXT_CONTENT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_save_text),
+                CallbackQueryHandler(admin_reset_text_cb,    pattern="^reset_text_"),
+                CallbackQueryHandler(admin_edit_texts_menu,  pattern="^admin_edit_texts$"),
+                CallbackQueryHandler(admin_panel_fallback,   pattern="^admin_panel$"),
+            ],
+            EDIT_IMAGE_SCREEN: [
+                CallbackQueryHandler(admin_edit_image_select, pattern="^edit_image_"),
+                CallbackQueryHandler(admin_panel_fallback,    pattern="^admin_panel$"),
+            ],
+            EDIT_IMAGE_URL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, admin_save_image),
+                CallbackQueryHandler(admin_reset_image_cb,    pattern="^reset_image_"),
+                CallbackQueryHandler(admin_edit_images_menu,  pattern="^admin_edit_images$"),
+                CallbackQueryHandler(admin_panel_fallback,    pattern="^admin_panel$"),
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", admin_edit_cancel),
+            CallbackQueryHandler(admin_panel_fallback, pattern="^admin_panel$"),
+        ],
+    ))
+
+    app.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, web_app_handler))
+
+    logger.info("🚀 Бот KENTAVR MARKET запущен!")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    try:
+        while True:
+            await asyncio.sleep(3600)
+    except Exception:
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
 
 
 def main():
     if not BOT_TOKEN:
         raise RuntimeError("BOT_TOKEN не установлен!")
     if not ADMIN_IDS:
-        logger.warning("ADMIN_IDS не установлен!")
-
+        logger.warning("⚠️ ADMIN_IDS не установлен!")
+    try:
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{BOT_TOKEN}/deleteWebhook",
+            data=json.dumps({"drop_pending_updates": True}).encode(),
+            headers={'Content-Type': 'application/json'},
+        )
+        urllib.request.urlopen(req, timeout=5)
+        logger.info("Webhook очищен")
+    except Exception:
+        pass
     threading.Thread(target=_start_health_server, daemon=True).start()
-
-    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
-    app.add_error_handler(on_error)
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("admin", cmd_admin))
-    app.add_handler(CallbackQueryHandler(on_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
-
-    logger.info("🚀 Запуск бота KENTAVR MARKET…")
-    app.run_polling(drop_pending_updates=True)
+    asyncio.run(async_main())
 
 
 if __name__ == "__main__":
