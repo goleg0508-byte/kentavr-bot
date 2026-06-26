@@ -74,7 +74,7 @@ NAMES = {
 }
 
 # Кэш картинок: url → bytes (заполняется лениво, в фоне)
-_img: dict = {}
+_cache: dict = {}
 
 # ── БД ──────────────────────────────────────────────────────────────────────────
 _pool   = None
@@ -241,11 +241,11 @@ def _fetch(url: str) -> bytes:
 
 
 async def _img(url: str):
-    if url in _img:
-        return _img[url]
+    if url in _cache:
+        return _cache[url]
     try:
         data = await asyncio.to_thread(_fetch, url)
-        _img[url] = data
+        _cache[url] = data
         log.info(f"img cached {len(data)//1024}KB: {url[:55]}")
         return data
     except Exception as e:
@@ -259,7 +259,7 @@ async def _preload_bg():
     log.info("Preloading images in background...")
     for key, url in IMAGES.items():
         await _img(url)
-    log.info(f"Preload done: {len(_img)}/{len(IMAGES)} cached")
+    log.info(f"Preload done: {len(_cache)}/{len(IMAGES)} cached")
 
 
 # ── Клавиатуры ───────────────────────────────────────────────────────────────────
@@ -302,7 +302,7 @@ async def show(bot, chat_id: int, key: str):
     url    = cimg or IMAGES.get(key)
 
     if url:
-        data = await _img(url)
+        data = await _img(url)  # использует _cache внутри
         if data:
             try:
                 await bot.send_photo(
